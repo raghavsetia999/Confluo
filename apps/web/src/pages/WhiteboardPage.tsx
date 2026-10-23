@@ -106,6 +106,13 @@ export default function WhiteboardPage() {
             <input
               value={editor.board.title}
               onChange={(event) => editor.rename(event.target.value)}
+              onBlur={(event) => {
+                // Titles are persisted per keystroke; normalise once the user
+                // leaves the field so an empty or padded title is never stored.
+                const title = event.target.value.trim()
+                if (!title) editor.rename("Untitled whiteboard")
+                else if (title !== event.target.value) editor.rename(title)
+              }}
               aria-label="Board title"
             />
             <span>

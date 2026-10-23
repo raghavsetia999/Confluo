@@ -1610,50 +1610,22 @@ body {
   position: absolute;
   inset: 0;
 }
-.canvas-editor > svg {
-  width: 100%;
-  height: 100%;
+.canvas-host {
+  position: absolute;
+  inset: 0;
   touch-action: none;
 }
-.canvas-editor.tool-pan svg {
+.canvas-host canvas {
+  display: block;
+}
+.canvas-editor.tool-pan .canvas-host {
   cursor: grab;
 }
-.canvas-editor.tool-pan svg:active {
+.canvas-editor.tool-pan .canvas-host:active {
   cursor: grabbing;
 }
-.canvas-editor.tool-eraser svg {
+.canvas-editor.tool-eraser .canvas-host {
   cursor: not-allowed;
-}
-.canvas-element {
-  cursor: move;
-}
-.canvas-element.selected {
-  filter: drop-shadow(0 2px 4px rgba(98, 93, 245, 0.12));
-}
-.element-text {
-  display: flex;
-  align-items: center;
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-  color: var(--ink);
-  font:
-    600 13px/1.4 "DM Sans",
-    sans-serif;
-  overflow-wrap: anywhere;
-}
-.selection-box circle {
-  fill: white;
-  stroke: var(--accent);
-  stroke-width: 2;
-  vector-effect: non-scaling-stroke;
-  cursor: nwse-resize;
-}
-.selection-box circle:last-child {
-  cursor: grab;
-}
-.remote-cursor {
-  pointer-events: none;
 }
 .board-topbar {
   position: absolute;

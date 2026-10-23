@@ -1,6 +1,7 @@
 import type { Whiteboard } from "../types/board.ts"
 import type { CanvasElement } from "../types/canvas.ts"
 import type { Revision } from "../types/revision.ts"
+import { sanitizeElements } from "../canvas/elementSchema.ts"
 import { browserPersistence, uid } from "./persistenceService.ts"
 
 const BOARDS_KEY = "confluo:boards"
@@ -15,9 +16,9 @@ const starterElements: CanvasElement[] = [
     height: 70,
     rotation: 0,
     style: {
-      fill: "transparent",
-      stroke: "#20201f",
-      strokeWidth: 1,
+      fill: "#20201f",
+      stroke: "transparent",
+      strokeWidth: 0,
       opacity: 1,
     },
     text: "Make onboarding feel effortless",
@@ -80,7 +81,15 @@ const defaultBoard = (
   }
 }
 
-const readBoards = () => browserPersistence.read<Whiteboard[]>(BOARDS_KEY, [])
+const readBoards = (): Whiteboard[] => {
+  const stored = browserPersistence.read<unknown>(BOARDS_KEY, [])
+  if (!Array.isArray(stored)) return []
+  return stored
+    .filter((board): board is Whiteboard =>
+      Boolean(board && typeof board === "object" && typeof board.id === "string"),
+    )
+    .map((board) => ({ ...board, elements: sanitizeElements(board.elements) }))
+}
 const saveBoards = (boards: Whiteboard[]) =>
   browserPersistence.write(BOARDS_KEY, boards)
 
