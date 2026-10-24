@@ -1,8 +1,24 @@
 import { Copy, RotateCw, Trash2 } from "lucide-react"
 import { useEditorStore } from "../../stores/editorStore.ts"
+import type { CanvasElement } from "../../types/canvas.ts"
 
-export default function PropertiesToolbar() {
-  const { elements, selectedIds, update, duplicate, remove } = useEditorStore()
+interface PropertiesToolbarProps {
+  onUpdate: (changes: {
+    rotation?: number
+    style?: Partial<CanvasElement["style"]>
+  }) => void
+  onRotate: () => void
+  onDuplicate: () => void
+  onDelete: () => void
+}
+
+export default function PropertiesToolbar({
+  onUpdate,
+  onRotate,
+  onDuplicate,
+  onDelete,
+}: PropertiesToolbarProps) {
+  const { elements, selectedIds } = useEditorStore()
   const selected = elements.find((element) => selectedIds.includes(element.id))
   if (!selected) return null
   return (
@@ -17,9 +33,7 @@ export default function PropertiesToolbar() {
               : selected.style.fill
           }
           onChange={(event) =>
-            update(selectedIds, {
-              style: { ...selected.style, fill: event.target.value },
-            })
+            onUpdate({ style: { fill: event.target.value } })
           }
         />
       </label>
@@ -29,9 +43,7 @@ export default function PropertiesToolbar() {
           type="color"
           value={selected.style.stroke}
           onChange={(event) =>
-            update(selectedIds, {
-              style: { ...selected.style, stroke: event.target.value },
-            })
+            onUpdate({ style: { stroke: event.target.value } })
           }
         />
       </label>
@@ -40,12 +52,7 @@ export default function PropertiesToolbar() {
         <select
           value={selected.style.strokeWidth}
           onChange={(event) =>
-            update(selectedIds, {
-              style: {
-                ...selected.style,
-                strokeWidth: Number(event.target.value),
-              },
-            })
+            onUpdate({ style: { strokeWidth: Number(event.target.value) } })
           }
         >
           <option value="1">1</option>
@@ -56,19 +63,17 @@ export default function PropertiesToolbar() {
       </label>
       <button
         className="icon-button"
-        onClick={() =>
-          update(selectedIds, { rotation: selected.rotation + 15 })
-        }
+        onClick={onRotate}
         title="Rotate 15°"
       >
         <RotateCw size={16} />
       </button>
-      <button className="icon-button" onClick={duplicate} title="Duplicate">
+      <button className="icon-button" onClick={onDuplicate} title="Duplicate">
         <Copy size={16} />
       </button>
       <button
         className="icon-button danger"
-        onClick={() => remove()}
+        onClick={onDelete}
         title="Delete"
       >
         <Trash2 size={16} />

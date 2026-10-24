@@ -12,35 +12,57 @@ const labels: Record<SyncStatus, string> = {
   syncing: "Saving locally",
   offline: "Offline · saved locally",
   reconnecting: "Reconnecting",
-  error: "Local save error",
+  connecting: "Connecting",
+  connected: "Connected · syncing",
+  synced: "Live · server sync",
+  disconnected: "Disconnected · changes at risk",
+  error: "Collaboration error",
 }
 
-export default function ConnectionStatus({
-  status,
-  simulateOffline,
-}: {
-  status: SyncStatus
-  simulateOffline: () => void
-}) {
+const notes: Partial<Record<SyncStatus, string>> = {
+  synced: "No save receipt",
+  connecting: "Loading shared state",
+  connected: "Waiting for document",
+  disconnected: "Reload may lose edits",
+  error: "Editing paused",
+}
+
+export default function ConnectionStatus({ status }: { status: SyncStatus }) {
   const Icon =
     status === "saved"
       ? Check
-      : status === "offline"
+      : status === "offline" || status === "disconnected"
         ? CloudOff
         : status === "error"
           ? AlertTriangle
-          : status === "syncing" || status === "reconnecting"
+          : status === "connecting" ||
+              status === "syncing" ||
+              status === "reconnecting" ||
+              status === "connected"
             ? LoaderCircle
             : Wifi
+  const spinning =
+    status === "syncing" ||
+    status === "reconnecting" ||
+    status === "connecting" ||
+    status === "connected"
+  const detail =
+    notes[status] ??
+    (status === "offline" || status === "saved" ? "Local fallback" : "")
   return (
-    <button
+    <div
       className={`connection-status status-${status}`}
-      onClick={simulateOffline}
-      title="Click to simulate offline/online"
+      title={
+        status === "synced"
+          ? "Connected to the collaboration server. This does not guarantee a durable snapshot yet."
+          : status === "disconnected"
+            ? "The collaboration socket is down. In-memory changes are not durably saved."
+            : undefined
+      }
     >
-      <Icon size={14} className={status === "syncing" ? "spin" : ""} />
+      <Icon size={14} className={spinning ? "spin" : ""} />
       <span>{labels[status]}</span>
-      <small>Local prototype</small>
-    </button>
+      {detail ? <small>{detail}</small> : null}
+    </div>
   )
 }

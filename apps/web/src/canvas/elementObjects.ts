@@ -384,7 +384,10 @@ export function readElement(object: FabricObject): CanvasElement | null {
   if (!meta) return null
 
   const center = object.getCenterPoint()
-  const scaling = object.getTotalObjectScaling()
+  // `getTotalObjectScaling()` also folds in the canvas viewport zoom and retina
+  // scaling, which would make the logical element geometry depend on the
+  // viewport. `getObjectScaling()` keeps only object/group scaling.
+  const scaling = object.getObjectScaling()
   const naturalHeight =
     meta.type === "text" ? (object as Textbox).height : meta.height
   const width = Math.max(1, Math.abs(meta.width * scaling.x))

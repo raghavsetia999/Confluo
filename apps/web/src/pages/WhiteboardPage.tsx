@@ -30,26 +30,13 @@ export default function WhiteboardPage() {
   const user = useAuthStore((state) => state.user)
   const editor = useEditorStore()
   const load = useEditorStore((state) => state.load)
-  const setSyncStatus = useEditorStore((state) => state.setSyncStatus)
   const [panel, setPanel] =
     useState<"share" | "history" | "voice" | "more" | null>(
       params.get("share") ? "share" : null,
     )
-  const [offlineSimulated, setOfflineSimulated] = useState(false)
   useEffect(() => {
     load(boardId)
   }, [boardId, load])
-  useEffect(() => {
-    const online = () =>
-      setSyncStatus(offlineSimulated ? "offline" : "saved")
-    const offline = () => setSyncStatus("offline")
-    window.addEventListener("online", online)
-    window.addEventListener("offline", offline)
-    return () => {
-      window.removeEventListener("online", online)
-      window.removeEventListener("offline", offline)
-    }
-  }, [offlineSimulated, setSyncStatus])
   if (!editor.board)
     return (
       <main className="not-found">
@@ -70,12 +57,6 @@ export default function WhiteboardPage() {
     setPanel(null)
     params.delete("share")
     setParams(params, { replace: true })
-  }
-  const simulateOffline = () => {
-    const next = !offlineSimulated
-    setOfflineSimulated(next)
-    editor.setSyncStatus(next ? "offline" : "reconnecting")
-    if (!next) setTimeout(() => editor.setSyncStatus("saved"), 700)
   }
   const exportBoard = () => {
     const blob = new Blob([JSON.stringify(editor.board, null, 2)], {
@@ -117,8 +98,8 @@ export default function WhiteboardPage() {
             />
             <span>
               {boardId === "demo"
-                ? "Public demo · local copy"
-                : "Private whiteboard"}
+                ? "Public demo · shared canvas"
+                : "Collaborative whiteboard"}
             </span>
           </div>
         </div>
@@ -144,7 +125,7 @@ export default function WhiteboardPage() {
           <button
             className="icon-button"
             onClick={editor.undo}
-            disabled={!editor.undoStack.length}
+            disabled={editor.collaborationActive || !editor.undoStack.length}
             title="Undo"
           >
             <Undo2 size={17} />
@@ -152,7 +133,7 @@ export default function WhiteboardPage() {
           <button
             className="icon-button"
             onClick={editor.redo}
-            disabled={!editor.redoStack.length}
+            disabled={editor.collaborationActive || !editor.redoStack.length}
             title="Redo"
           >
             <Redo2 size={17} />
@@ -174,10 +155,7 @@ export default function WhiteboardPage() {
       </header>
       <DrawingToolbar />
       <div className="board-status">
-        <ConnectionStatus
-          status={editor.syncStatus}
-          simulateOffline={simulateOffline}
-        />
+        <ConnectionStatus status={editor.syncStatus} />
         <button
           className="icon-button"
           onClick={() =>
@@ -211,6 +189,7 @@ export default function WhiteboardPage() {
             Manage collaborators
           </button>
           <button
+            disabled={editor.collaborationActive}
             onClick={() => {
               editor.checkpoint(
                 `Checkpoint ${editor.board!.revisions.length + 1}`,

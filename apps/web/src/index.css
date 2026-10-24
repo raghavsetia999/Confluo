@@ -1618,6 +1618,37 @@ body {
 .canvas-host canvas {
   display: block;
 }
+.canvas-editor.collab-locked .canvas-host {
+  pointer-events: none;
+  filter: saturate(0.65);
+  opacity: 0.72;
+}
+.collab-lock {
+  position: absolute;
+  z-index: 12;
+  top: 50%;
+  left: 50%;
+  display: grid;
+  gap: 5px;
+  width: min(320px, calc(100vw - 40px));
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: var(--shadow-md);
+  text-align: center;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+.collab-lock strong {
+  color: var(--ink);
+  font-size: 12px;
+}
+.collab-lock span {
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.5;
+}
 .canvas-editor.tool-pan .canvas-host {
   cursor: grab;
 }
@@ -1920,10 +1951,7 @@ body {
   background: transparent;
   color: var(--muted);
   text-align: left;
-  cursor: pointer;
-}
-.connection-status:hover {
-  background: var(--soft);
+  cursor: default;
 }
 .connection-status svg {
   grid-row: span 2;
@@ -1937,10 +1965,12 @@ body {
   color: var(--faint);
   font-size: 6px;
 }
-.connection-status.status-offline svg {
+.connection-status.status-offline svg,
+.connection-status.status-disconnected svg {
   color: var(--warning);
 }
-.connection-status.status-error svg {
+.connection-status.status-error svg,
+.connection-status.status-error span {
   color: var(--danger);
 }
 .canvas-text-editor {

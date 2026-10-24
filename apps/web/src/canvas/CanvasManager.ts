@@ -6,7 +6,12 @@ import {
   type TPointerEventInfo,
   type TPointerEvent,
 } from "fabric"
-import type { CanvasElement, EditorTool, ElementType } from "../types/canvas.ts"
+import type {
+  CanvasChangeListener,
+  CanvasElement,
+  EditorTool,
+  ElementType,
+} from "../types/canvas.ts"
 import {
   applyElementToObject,
   createElementObject,
@@ -58,6 +63,7 @@ export class CanvasManager {
   private readonly handlers: CanvasManagerHandlers
   private readonly objects = new Map<string, FabricObject>()
   private readonly observer: ResizeObserver
+  private readonly changeListeners = new Set<CanvasChangeListener>()
 
   private tool: EditorTool = "select"
   private before: CanvasElement[] | null = null
@@ -77,6 +83,10 @@ export class CanvasManager {
   private pan: { start: Point; transform: number[] } | null = null
   /** The text object currently in edit mode, if any (may be a group child). */
   private editing: FabricObject | null = null
+  /** The element id under an active Fabric transform, if any. */
+  private transforming: string | null = null
+  /** Remote ids whose update must wait for the current local gesture to end. */
+  private readonly deferredRemote = new Set<string>()
 
   constructor(
     host: HTMLElement,
@@ -122,6 +132,8 @@ export class CanvasManager {
       const editing = this.editing as FabricObject & { exitEditing(): void }
       editing.exitEditing()
     }
+    this.changeListeners.clear()
+    this.unbind()
     this.observer.disconnect()
     // Fabric's `dispose()` is asynchronous and, when it settles, restores the
     // original <canvas> element into the host. Under StrictMode that happens
@@ -135,13 +147,190 @@ export class CanvasManager {
     wrapper?.remove()
     this.objects.clear()
     this.editing = null
+    this.transforming = null
+    this.deferredRemote.clear()
+  }
+
+  /**
+   * Observe committed local document changes. The canvas engine never emits
+   * during viewport pan/zoom or during `setElements` reconciliation; only user
+   * gestures that changed the document reach this feed.
+   */
+  subscribeChanges(listener: CanvasChangeListener): () => void {
+    this.changeListeners.add(listener)
+    return () => {
+      this.changeListeners.delete(listener)
+    }
+  }
+
+  private emitChange(elements: CanvasElement[], before: CanvasElement[]) {
+    this.handlers.onChange(elements, before)
+    for (const listener of [...this.changeListeners]) listener(elements, before)
+  }
+
+  /**
+   * Project one shared element into the canvas without publishing a local
+   * change. The element id stays in the out-of-band registry created by
+   * `createElementObject`/`applyElementToObject`.
+   */
+  applyRemoteElement(element: CanvasElement) {
+    if (this.isElementBusy(element.id)) return
+    this.deferredRemote.delete(element.id)
+
+    const existing = this.objects.get(element.id)
+    if (existing && metaOf(existing)?.type === element.type) {
+      applyElementToObject(existing, element)
+    } else {
+      if (existing) this.dropObject(existing)
+      const object = createElementObject(element)
+      const selectable = this.tool === "select"
+      object.selectable = selectable
+      object.evented = selectable || this.tool === "eraser"
+      this.objects.set(element.id, object)
+      this.canvas.add(object)
+    }
+    this.canvas.requestRenderAll()
+  }
+
+  /** Remove a shared element that was deleted or whose root entry disappeared. */
+  removeRemoteElement(id: string) {
+    if (this.isElementBusy(id)) return
+    this.deferredRemote.delete(id)
+    const object = this.objects.get(id)
+    if (!object) return
+
+    const wasActive = this.canvas
+      .getActiveObjects()
+      .some((candidate) => elementIdOf(candidate) === id)
+    this.dropObject(object)
+    if (wasActive) {
+      this.canvas.discardActiveObject()
+      this.syncSelection()
+    }
+    this.canvas.requestRenderAll()
+  }
+
+  /**
+   * True while remote data must not touch this element: an active text editor
+   * owns the text, and an active transform owns the geometry. The local commit
+   * that ends the interaction is written after the deferred remote update and
+   * therefore wins.
+   */
+  isElementBusy(id: string): boolean {
+    return (
+      this.transforming === id ||
+      (this.editing !== null && elementIdOf(this.editing) === id)
+    )
+  }
+
+  /**
+   * The binding calls this when it defers a remote change for a busy element.
+   * The next gesture-end commit must be forced even if the local value did not
+   * change, otherwise the deferred remote value would remain in the document.
+   */
+  markRemoteDeferred(id: string) {
+    this.deferredRemote.add(id)
+  }
+
+  private consumeRemoteDeferred(id: string | null): boolean {
+    if (!id) return false
+    return this.deferredRemote.delete(id)
+  }
+
+  /**
+   * Apply a toolbar property change as a committed canvas edit. Routing this
+   * through the manager (rather than writing the store directly) keeps the
+   * binding the single document writer and gives the change the same origin
+   * and undo semantics as a pointer gesture.
+   */
+  updateSelected(changes: {
+    rotation?: number
+    style?: Partial<CanvasElement["style"]>
+  }) {
+    const selected = this.selectedElementIds()
+    if (!selected.size) return
+    this.commitDocument((element) => {
+      if (!selected.has(element.id)) return element
+      return {
+        ...element,
+        rotation: changes.rotation ?? element.rotation,
+        style: changes.style
+          ? { ...element.style, ...changes.style }
+          : element.style,
+      }
+    })
+  }
+
+  rotateSelected(degrees: number) {
+    const selected = this.selectedElementIds()
+    if (!selected.size) return
+    this.commitDocument((element) =>
+      selected.has(element.id)
+        ? { ...element, rotation: element.rotation + degrees }
+        : element,
+    )
+  }
+
+  deleteSelected() {
+    const selected = this.selectedElementIds()
+    if (!selected.size) return
+    const previous = this.readAll()
+    const next = previous.filter((element) => !selected.has(element.id))
+    if (next.length === previous.length) return
+    this.setElements(next)
+    this.canvas.discardActiveObject()
+    this.before = previous
+    this.commit(next)
+    this.syncSelection()
+    this.canvas.requestRenderAll()
+  }
+
+  duplicateSelected() {
+    const selected = this.selectedElementIds()
+    if (!selected.size) return
+    const previous = this.readAll()
+    const copies = previous
+      .filter((element) => selected.has(element.id))
+      .map((element) => ({
+        ...structuredClone(element),
+        id: uid("element"),
+        x: element.x + 24,
+        y: element.y + 24,
+      }))
+    if (!copies.length) return
+    const next = [...previous, ...copies]
+    this.setElements(next)
+    this.before = previous
+    this.commit(next)
+    this.selectElement(copies[0].id)
+  }
+
+  private selectedElementIds(): Set<string> {
+    const ids = new Set<string>()
+    for (const object of this.canvas.getActiveObjects()) {
+      const id = elementIdOf(object)
+      if (id) ids.add(id)
+    }
+    return ids
+  }
+
+  private commitDocument(
+    update: (element: CanvasElement) => CanvasElement,
+  ) {
+    const previous = this.readAll()
+    const next = previous.map(update)
+    if (sequence(previous) === sequence(next)) return
+    this.setElements(next)
+    this.before = previous
+    this.commit(next)
   }
 
   // ---------------------------------------------------------------- document
 
   /**
    * Reconcile the canvas against the authoritative element list. Called for
-   * undo/redo, property edits, board loads — and later, for remote Yjs updates.
+   * undo/redo, property edits and board loads. Remote Yjs updates use the
+   * incremental `applyRemoteElement`/`removeRemoteElement` path instead.
    */
   setElements(elements: CanvasElement[]) {
     if (elements === this.lastEmitted) return
@@ -207,14 +396,23 @@ export class CanvasManager {
   /**
    * Publish a canvas-originated change. `before` carries the pre-gesture state
    * so the store can record one undo entry per gesture rather than per frame.
+   * `force` is used at a text-editor exit: it is a commit boundary even when
+   * the text did not change, and that local value must be allowed to overwrite
+   * a remote edit deferred during the local edit.
    */
-  private flush() {
+  private flush(force = false) {
     const elements = this.readAll()
     const previous = this.before ?? elements
     this.before = null
-    if (this.lastEmitted && sequence(this.lastEmitted) === sequence(elements)) return
+    if (
+      !force &&
+      this.lastEmitted &&
+      sequence(this.lastEmitted) === sequence(elements)
+    ) {
+      return
+    }
     this.lastEmitted = elements
-    this.handlers.onChange(elements, previous)
+    this.emitChange(elements, previous)
   }
 
   private commit(next: CanvasElement[]) {
@@ -223,7 +421,7 @@ export class CanvasManager {
     // Deliberately does not set `lastEmitted`: creation and deletion still need
     // the reconciler to run so the canvas catches up with the store. Transform
     // gestures go through `flush`, which already reflects them.
-    this.handlers.onChange(next, previous)
+    this.emitChange(next, previous)
   }
 
   // ------------------------------------------------------------------- tools
@@ -250,7 +448,14 @@ export class CanvasManager {
   }
 
   isEditing(object?: FabricObject | null) {
-    const target = object ?? this.canvas.getActiveObject()
+    // With an explicit object, answer for that object only. Without one, the
+    // tracked editing object wins: Fabric may keep the sticky-note group active
+    // while its label Textbox is the thing in edit mode.
+    if (object !== undefined) {
+      return !!object && "isEditing" in object && Boolean(object.isEditing)
+    }
+    if (this.editing) return true
+    const target = this.canvas.getActiveObject()
     return !!target && "isEditing" in target && Boolean(target.isEditing)
   }
 
@@ -338,11 +543,26 @@ export class CanvasManager {
     this.canvas.on("mouse:up", this.onPointerUp)
     this.canvas.on("mouse:wheel", this.onWheel)
     this.canvas.on("object:modified", this.onModified)
+    this.canvas.on("before:transform", this.onBeforeTransform)
     this.canvas.on("text:editing:entered", this.onEditingEntered)
     this.canvas.on("text:editing:exited", this.onEditingExited)
     this.canvas.on("selection:created", this.syncSelection)
     this.canvas.on("selection:updated", this.syncSelection)
     this.canvas.on("selection:cleared", this.syncSelection)
+  }
+
+  private unbind() {
+    this.canvas.off("mouse:down", this.onPointerDown)
+    this.canvas.off("mouse:move", this.onPointerMove)
+    this.canvas.off("mouse:up", this.onPointerUp)
+    this.canvas.off("mouse:wheel", this.onWheel)
+    this.canvas.off("object:modified", this.onModified)
+    this.canvas.off("before:transform", this.onBeforeTransform)
+    this.canvas.off("text:editing:entered", this.onEditingEntered)
+    this.canvas.off("text:editing:exited", this.onEditingExited)
+    this.canvas.off("selection:created", this.syncSelection)
+    this.canvas.off("selection:updated", this.syncSelection)
+    this.canvas.off("selection:cleared", this.syncSelection)
   }
 
   private syncSelection = () => {
@@ -355,7 +575,15 @@ export class CanvasManager {
   }
 
   private onModified = () => {
-    this.flush()
+    const id = this.transforming
+    this.transforming = null
+    this.flush(this.consumeRemoteDeferred(id))
+  }
+
+  private onBeforeTransform = (event: {
+    transform?: { target?: FabricObject }
+  }) => {
+    this.transforming = elementIdOf(event.transform?.target) ?? null
   }
 
   private onEditingEntered = (event: { target?: FabricObject }) => {
@@ -364,8 +592,9 @@ export class CanvasManager {
   }
 
   private onEditingExited = () => {
+    const id = this.editing ? (elementIdOf(this.editing) ?? null) : null
     this.editing = null
-    this.flush()
+    this.flush(this.consumeRemoteDeferred(id))
   }
 
   private onPointerDown = (event: TPointerEventInfo<TPointerEvent>) => {
@@ -664,11 +893,14 @@ export class CanvasManager {
 
   /** Escape: leave text editing first, otherwise clear the selection. */
   cancel() {
-    const active = this.canvas.getActiveObject()
-    if (this.isEditing(active)) {
+    const id = this.transforming
+    this.transforming = null
+    const active = this.editing ?? this.canvas.getActiveObject()
+    if (active && this.isEditing(active)) {
       ;(active as unknown as { exitEditing(): void }).exitEditing()
       return
     }
+    if (this.consumeRemoteDeferred(id)) this.flush(true)
     this.canvas.discardActiveObject()
     this.syncSelection()
     this.canvas.requestRenderAll()

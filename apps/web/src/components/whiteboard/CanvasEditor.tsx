@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react"
+import { useBoardCollaboration } from "../../collab/useBoardCollaboration.ts"
 import { CanvasManager, type ViewportState } from "../../canvas/CanvasManager.ts"
 import { useEditorStore } from "../../stores/editorStore.ts"
-import type { EditorTool } from "../../types/canvas.ts"
+import type { CanvasElement, EditorTool } from "../../types/canvas.ts"
 import Minimap from "./Minimap.tsx"
 import PropertiesToolbar from "./PropertiesToolbar.tsx"
 import ZoomControls from "./ZoomControls.tsx"
@@ -29,6 +30,14 @@ export default function CanvasEditor() {
   })
   const tool = useEditorStore((state) => state.tool)
   const elements = useEditorStore((state) => state.elements)
+  const boardId = useEditorStore((state) => state.board?.id ?? null)
+  const collaborationActive = useEditorStore(
+    (state) => state.collaborationActive,
+  )
+  const collaborationReady = useEditorStore(
+    (state) => state.collaborationReady,
+  )
+  const syncStatus = useEditorStore((state) => state.syncStatus)
 
   useEffect(() => {
     const host = hostRef.current
@@ -48,7 +57,15 @@ export default function CanvasEditor() {
     setViewport(manager.getViewport())
 
     const unsubscribe = useEditorStore.subscribe((next, previous) => {
-      if (next.elements !== previous.elements) manager.setElements(next.elements)
+      // Remote snapshots are already projected by CanvasBinding. Re-feeding the
+      // derived Zustand copy would duplicate the work and could interrupt an
+      // in-flight local gesture.
+      if (
+        next.elements !== previous.elements &&
+        next.elementsSource !== "remote"
+      ) {
+        manager.setElements(next.elements)
+      }
       if (next.tool !== previous.tool) manager.setTool(next.tool)
     })
 
@@ -59,6 +76,8 @@ export default function CanvasEditor() {
     }
   }, [])
 
+  useBoardCollaboration(boardId, managerRef)
+
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null
@@ -66,6 +85,7 @@ export default function CanvasEditor() {
       const manager = managerRef.current
       if (manager?.isEditing()) return
       const store = useEditorStore.getState()
+      if (store.collaborationActive && !store.collaborationReady) return
 
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") {
         event.preventDefault()
@@ -76,7 +96,8 @@ export default function CanvasEditor() {
       if (event.key === "Delete" || event.key === "Backspace") {
         if (store.selectedIds.length) {
           event.preventDefault()
-          store.remove()
+          if (manager) manager.deleteSelected()
+          else store.remove()
         }
         return
       }
@@ -92,10 +113,82 @@ export default function CanvasEditor() {
     return () => window.removeEventListener("keydown", handler)
   }, [])
 
+  const updateSelected = (changes: {
+    rotation?: number
+    style?: Partial<CanvasElement["style"]>
+  }) => {
+    const manager = managerRef.current
+    if (manager) {
+      manager.updateSelected(changes)
+      return
+    }
+    const state = useEditorStore.getState()
+    const selected = state.elements.find((element) =>
+      state.selectedIds.includes(element.id),
+    )
+    if (!selected) return
+    state.update(state.selectedIds, {
+      ...changes,
+      style: changes.style
+        ? { ...selected.style, ...changes.style }
+        : selected.style,
+    })
+  }
+
+  const rotateSelected = () => {
+    const manager = managerRef.current
+    if (manager) {
+      manager.rotateSelected(15)
+      return
+    }
+    const state = useEditorStore.getState()
+    const selected = state.elements.find((element) =>
+      state.selectedIds.includes(element.id),
+    )
+    if (selected) {
+      state.update([selected.id], { rotation: selected.rotation + 15 })
+    }
+  }
+
+  const duplicateSelected = () => {
+    const manager = managerRef.current
+    if (manager) manager.duplicateSelected()
+    else useEditorStore.getState().duplicate()
+  }
+
+  const deleteSelected = () => {
+    const manager = managerRef.current
+    if (manager) manager.deleteSelected()
+    else useEditorStore.getState().remove()
+  }
+
+  const locked = collaborationActive && !collaborationReady
+
   return (
-    <div className={`canvas-editor tool-${tool}`}>
+    <div
+      className={`canvas-editor tool-${tool} ${locked ? "collab-locked" : ""}`}
+    >
       <div className="canvas-host" ref={hostRef} />
-      <PropertiesToolbar />
+      {locked ? (
+        <div className="collab-lock" role="status">
+          <strong>
+            {syncStatus === "error"
+              ? "Collaboration unavailable"
+              : "Connecting to shared board"}
+          </strong>
+          <span>
+            {syncStatus === "error"
+              ? "Editing is paused so changes are not mistaken for saved work."
+              : "The canvas is read-only until the shared document is synced."}
+          </span>
+        </div>
+      ) : null}
+      <PropertiesToolbar
+        onUpdate={updateSelected}
+        onRotate={rotateSelected}
+        onDuplicate={duplicateSelected}
+        onDelete={deleteSelected}
+      />
       <ZoomControls
         zoom={viewport.zoom}
         setZoom={(zoom) => managerRef.current?.setZoom(zoom)}
