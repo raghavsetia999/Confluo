@@ -6,11 +6,11 @@ import type { CanvasElement } from "../types/canvas.ts"
  * Typed wrapper over the shared Yjs document for one board.
  *
  * This module owns the **document shape only**. It knows nothing about
- * Hocuspocus, sockets, Fabric, React or Zustand. The B2 binding will read and
- * write through these functions; the B4 server hook will call
- * `migrateSliceADocument` exactly once when a board has no stored state.
+ * Hocuspocus, sockets, Fabric, React or Zustand. The canvas binding reads and
+ * writes through these functions, and the server calls
+ * `migrateSliceADocument` once when a board has no stored state.
  *
- * Shape (see docs/architecture/slice-b-collaboration.md §3):
+ * Shape (see docs/architecture/slice-b-collaboration.md §4):
  *
  *   Y.Doc
  *   ├─ "elements" : Y.Map<elementId, Y.Map>   one nested map per element
