@@ -1,0 +1,40 @@
+{
+  "name": "@confluo/server",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsup",
+    "start": "node dist/index.js",
+    "migrate": "tsx src/db/migrate-cli.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "test:browser": "tsx scripts/collaboration-browser-smoke.ts"
+  },
+  "dependencies": {
+    "@hocuspocus/server": "^4.7.1",
+    "dotenv": "^17.4.2",
+    "express": "^5.3.0",
+    "pg": "^8.23.1",
+    "yjs": "^13.6.33",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.11",
+    "@hocuspocus/provider": "^4.7.1",
+    "@types/express": "^5.0.6",
+    "@types/node": "^24.19.2",
+    "@types/pg": "^8.23.1",
+    "@types/ws": "^8.18.2",
+    "tsup": "^8.5.1",
+    "tsx": "^4.23.15",
+    "typescript": "~6.0.3",
+    "vitest": "^5.0.5",
+    "ws": "^8.22.0",
+    "y-protocols": "^1.0.7"
+  }
+}
