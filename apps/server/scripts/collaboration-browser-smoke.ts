@@ -41,6 +41,14 @@ class Page {
     this.targetId = target.targetId
     this.session = (await send('Target.attachToTarget', { targetId: this.targetId, flatten: true })).sessionId
     await send('Runtime.enable', {}, this.session)
+    // Keep the drawing coordinates deterministic regardless of the browser's
+    // startup window size.
+    await send('Emulation.setDeviceMetricsOverride', {
+      width: 1440,
+      height: 900,
+      deviceScaleFactor: 1,
+      mobile: false,
+    }, this.session)
     await send('Page.enable', {}, this.session)
     for (const event of events) {
       if (event.sessionId === this.session && event.method === 'Runtime.exceptionThrown') this.errors.push(event.params.exceptionDetails?.text ?? 'exception')
@@ -122,6 +130,15 @@ await waitFor(() => elements().some((e) => e.type === 'rectangle' && e.x > 620),
 await waitFor(async () => (await b.hash()) !== beforeMove, 'move visible in second browser')
 console.log('move propagated')
 
+// Repeat the check in the opposite direction: B moves the element and A must
+// observe it. This proves propagation is not one-way.
+const beforeReverseMove = await a.hash()
+await b.click('[aria-label="Select"]')
+await b.drag(760, 585, 760, 480)
+await waitFor(() => elements().some((e) => e.type === 'rectangle' && e.y < 500), 'reverse move in shared document')
+await waitFor(async () => (await a.hash()) !== beforeReverseMove, 'reverse move visible in first browser')
+console.log('reverse move propagated')
+
 const beforeSticky = await b.hash()
 await a.click('[aria-label="Sticky note"]')
 await a.mouse('mousePressed', 980, 560, { button: 'left', buttons: 1, clickCount: 1 })
@@ -144,6 +161,10 @@ await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Delete', code: 'Dele
 await waitFor(() => !elements().some((e) => e.text === 'hello collab'), 'sticky delete in shared document')
 await waitFor(async () => (await b.hash()) !== beforeDelete, 'delete visible in second browser')
 console.log('delete propagated')
+
+// Clear B's selection outline before comparing pixels across a reload.
+await b.mouse('mousePressed', 1200, 700, { button: 'left', buttons: 1, clickCount: 1 })
+await b.mouse('mouseReleased', 1200, 700, { button: 'left', buttons: 0, clickCount: 1 })
 
 // Let Hocuspocus' 2 s store debounce run, then prove a full page reload restores
 // the shared snapshot/log rather than the stale Slice A localStorage copy.

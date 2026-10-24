@@ -301,8 +301,8 @@ The browser smoke test needs the web/server stack and Chrome remote debugging on
 port 9222. The other commands run without a browser.
 
 The tests cover legacy migration, reload after restart, replay after a snapshot,
-board isolation, unknown-board rejection, two-client create/move/text/delete,
-and refresh recovery.
+board isolation, unknown-board rejection, two-client create/move/text/delete
+(including a move from each browser), and refresh recovery.
 
 ## Glossary
 

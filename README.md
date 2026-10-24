@@ -153,7 +153,8 @@ npm run typecheck --workspace @confluo/server
 ## Browser collaboration smoke test
 
 The smoke test opens two independent browser contexts and verifies create, move,
-text, delete and refresh convergence. It requires:
+text, delete and refresh convergence, including a move made from each browser. It
+requires:
 
 - PostgreSQL or PGlite server running on port `4001` WebSocket / `4000` HTTP
 - Vite on `http://localhost:5173`
