@@ -17,7 +17,9 @@ interface EditorState {
   syncStatus: SyncStatus
   collaborationActive: boolean
   collaborationReady: boolean
-  load(boardId: string): void
+  loading: boolean
+  error: string | null
+  load(boardId: string): Promise<void>
   setTool(tool: EditorTool): void
   select(ids: string[]): void
   commit(elements: CanvasElement[], snapshot?: CanvasElement[]): void
@@ -27,7 +29,7 @@ interface EditorState {
   duplicate(): void
   undo(): void
   redo(): void
-  rename(title: string): void
+  rename(title: string): Promise<void>
   checkpoint(label: string): void
   restore(revision: Revision): void
   branch(revision: Revision, name: string): void
@@ -37,10 +39,10 @@ interface EditorState {
   setCollaboration(active: boolean, ready: boolean): void
 }
 
-const persist = (board: Whiteboard | null, elements: CanvasElement[]) => {
-  if (board) return boardService.update(board.id, { elements })
-  return null
-}
+const messageFor = (error: unknown): string =>
+  error instanceof Error ? error.message : "Unable to load this board."
+
+let loadGeneration = 0
 
 export const useEditorStore = create<EditorState>((set, get) => ({
   board: null,
@@ -50,14 +52,17 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   tool: "select",
   undoStack: [],
   redoStack: [],
-  syncStatus: navigator.onLine ? "saved" : "offline",
+  syncStatus: "disconnected",
   collaborationActive: false,
   collaborationReady: false,
-  load(boardId) {
-    const board = boardService.get(boardId)
+  loading: false,
+  error: null,
+
+  async load(boardId) {
+    const generation = ++loadGeneration
     set({
-      board,
-      elements: board?.elements ?? [],
+      board: null,
+      elements: [],
       elementsSource: "local",
       selectedIds: [],
       undoStack: [],
@@ -65,16 +70,40 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       collaborationActive: false,
       collaborationReady: false,
       syncStatus: "connecting",
+      loading: true,
+      error: null,
     })
+    try {
+      const board = await boardService.get(boardId)
+      if (generation !== loadGeneration) return
+      set({
+        board,
+        elements: board.elements,
+        elementsSource: "local",
+        loading: false,
+        error: null,
+      })
+    } catch (error) {
+      if (generation !== loadGeneration) return
+      set({
+        board: null,
+        elements: [],
+        loading: false,
+        error: messageFor(error),
+        syncStatus: "error",
+      })
+    }
   },
+
   setTool: (tool) => set({ tool }),
   select: (selectedIds) => set({ selectedIds }),
+
   commit(elements, snapshot) {
     const state = get()
     const previous = snapshot ?? state.elements
     if (state.collaborationActive) {
-      // Yjs is authoritative. Keep the in-memory copy for secondary UI (for
-      // example the minimap), but never write canvas contents to Slice A JSON.
+      // Yjs is authoritative. This copy only feeds secondary UI such as the
+      // minimap and must never be written to a local board blob.
       set({
         board: state.board
           ? { ...state.board, elements, updatedAt: new Date().toISOString() }
@@ -86,25 +115,22 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       })
       return
     }
-    set({ syncStatus: navigator.onLine ? "syncing" : "offline" })
-    try {
-      const board = persist(state.board, elements)
-      set({
-        board: board ?? state.board,
-        elements,
-        elementsSource: "local",
-        undoStack: [...state.undoStack.slice(-49), structuredClone(previous)],
-        redoStack: [],
-        syncStatus: navigator.onLine ? "saved" : "offline",
-      })
-    } catch {
-      set({ syncStatus: "error" })
-    }
+    set({
+      board: state.board
+        ? { ...state.board, elements, updatedAt: new Date().toISOString() }
+        : null,
+      elements,
+      elementsSource: "local",
+      undoStack: [...state.undoStack.slice(-49), structuredClone(previous)],
+      redoStack: [],
+    })
   },
+
   add(element) {
     get().commit([...get().elements, element])
     set({ selectedIds: [element.id], tool: "select" })
   },
+
   update(ids, changes) {
     get().commit(
       get().elements.map((element) =>
@@ -120,11 +146,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       ),
     )
   },
+
   remove(ids = get().selectedIds) {
     if (!ids.length) return
     get().commit(get().elements.filter((element) => !ids.includes(element.id)))
     set({ selectedIds: [] })
   },
+
   duplicate() {
     const state = get()
     const copies = state.elements
@@ -139,100 +167,73 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     state.commit([...state.elements, ...copies])
     set({ selectedIds: copies.map((copy) => copy.id) })
   },
+
   undo() {
     const state = get()
     if (state.collaborationActive) return
     const previous = state.undoStack.at(-1)
     if (!previous) return
-    const board = persist(state.board, previous)
     set({
-      board: board ?? state.board,
+      board: state.board
+        ? { ...state.board, elements: previous, updatedAt: new Date().toISOString() }
+        : null,
       elements: previous,
       elementsSource: "local",
       undoStack: state.undoStack.slice(0, -1),
       redoStack: [structuredClone(state.elements), ...state.redoStack],
       selectedIds: [],
-      syncStatus: navigator.onLine ? "saved" : "offline",
     })
   },
+
   redo() {
     const state = get()
     if (state.collaborationActive) return
     const next = state.redoStack[0]
     if (!next) return
-    const board = persist(state.board, next)
     set({
-      board: board ?? state.board,
+      board: state.board
+        ? { ...state.board, elements: next, updatedAt: new Date().toISOString() }
+        : null,
       elements: next,
       elementsSource: "local",
       undoStack: [...state.undoStack, structuredClone(state.elements)],
       redoStack: state.redoStack.slice(1),
       selectedIds: [],
-      syncStatus: navigator.onLine ? "saved" : "offline",
     })
   },
-  rename(title) {
+
+  async rename(title) {
     const state = get()
     if (!state.board) return
-    set({ board: boardService.update(state.board.id, { title }) })
-  },
-  checkpoint(label) {
-    const state = get()
-    if (!state.board || state.collaborationActive) return
-    boardService.checkpoint(state.board.id, label, state.elements)
-    set({ board: boardService.get(state.board.id) })
-  },
-  restore(revision) {
-    if (get().collaborationActive) return
-    get().commit(structuredClone(revision.elements))
-    get().checkpoint(`Restored: ${revision.label ?? "revision"}`)
-  },
-  branch(revision, name) {
-    const state = get()
-    if (!state.board || state.collaborationActive) return
-    const branch = {
-      id: uid("branch"),
-      boardId: state.board.id,
-      name,
-      headRevisionId: revision.id,
-      createdAt: new Date().toISOString(),
+    const previous = state.board.title
+    set({ board: { ...state.board, title }, error: null })
+    try {
+      const updated = await boardService.rename(state.board.id, title)
+      if (get().board?.id !== state.board.id) return
+      set((current) => ({
+        board: current.board
+          ? {
+              ...current.board,
+              title: updated.title,
+              updatedAt: updated.updatedAt,
+            }
+          : null,
+      }))
+    } catch (error) {
+      set((current) => ({
+        board: current.board ? { ...current.board, title: previous } : null,
+        error: messageFor(error),
+      }))
     }
-    const board = boardService.update(state.board.id, {
-      branches: [...state.board.branches, branch],
-      activeBranchId: branch.id,
-      elements: structuredClone(revision.elements),
-    })
-    set({
-      board,
-      elements: structuredClone(revision.elements),
-      elementsSource: "local",
-      selectedIds: [],
-    })
   },
-  switchBranch(branchId) {
-    const state = get()
-    if (!state.board || state.collaborationActive) return
-    const branch = state.board.branches.find((item) => item.id === branchId)
-    if (!branch) return
-    const revision = state.board.revisions.find(
-      (item) => item.id === branch.headRevisionId,
-    )
-    const elements = revision
-      ? structuredClone(revision.elements)
-      : state.elements
-    const board = boardService.update(state.board.id, {
-      activeBranchId: branchId,
-      elements,
-    })
-    set({
-      board,
-      elements,
-      elementsSource: "local",
-      selectedIds: [],
-      undoStack: [...state.undoStack, structuredClone(state.elements)],
-      redoStack: [],
-    })
-  },
+
+  // Version history and branches belong to the earlier local-only slice. They
+  // are deliberately not reimplemented in this accounts/board-milestone.
+  checkpoint(_label: string) {},
+  restore(_revision: Revision) {},
+  branch(_revision: Revision, _name: string) {},
+  switchBranch(_branchId: string) {},
+
   applyRemote(elements) {
     const state = get()
     const ids = new Set(elements.map((element) => element.id))
@@ -245,6 +246,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       selectedIds: state.selectedIds.filter((id) => ids.has(id)),
     })
   },
+
   setSyncStatus: (syncStatus) => set({ syncStatus }),
   setCollaboration: (collaborationActive, collaborationReady) =>
     set({

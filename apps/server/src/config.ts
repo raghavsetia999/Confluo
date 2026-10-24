@@ -1,11 +1,19 @@
 import "dotenv/config"
 
+export type DatabaseDriver = "postgres" | "pglite"
+
+interface DatabaseSelection {
+  databaseUrl: string | null
+  pgliteDataDir: string | null
+}
+
 export interface ServerConfig {
   port: number
   hocuspocusPort: number
   databaseUrl: string | null
   pgliteDataDir: string | null
   corsOrigin: string
+  cookieSecure: boolean
   hocuspocusDebounceMs: number
   hocuspocusMaxDebounceMs: number
   pruneUpdateLog: boolean
@@ -21,17 +29,7 @@ const readPositiveInt = (name: string, fallback: number): number => {
   return parsed
 }
 
-const readDriver = (): { databaseUrl: string | null; pgliteDataDir: string | null } => {
-  const driver = (process.env.DATABASE_DRIVER ?? "postgres").toLowerCase()
-  if (driver === "pglite") {
-    return {
-      databaseUrl: null,
-      pgliteDataDir: process.env.PGLITE_DATA_DIR ?? ".pglite",
-    }
-  }
-  if (driver !== "postgres") {
-    throw new Error('DATABASE_DRIVER must be either "postgres" or "pglite"')
-  }
+const readPostgresUrl = (): string => {
   const databaseUrl = process.env.DATABASE_URL?.trim()
   if (!databaseUrl) {
     throw new Error(
@@ -39,7 +37,45 @@ const readDriver = (): { databaseUrl: string | null; pgliteDataDir: string | nul
         "Use DATABASE_DRIVER=pglite only for local development.",
     )
   }
-  return { databaseUrl, pgliteDataDir: null }
+
+  let parsed: URL
+  try {
+    parsed = new URL(databaseUrl)
+  } catch {
+    throw new Error(
+      "DATABASE_URL must be a valid PostgreSQL connection string, for example " +
+        "postgresql://localhost:5432/confluo",
+    )
+  }
+
+  // Accept both libpq schemes; never echo the URL because it may contain a
+  // password. A missing host is valid for local Unix-socket connections.
+  if (parsed.protocol !== "postgres:" && parsed.protocol !== "postgresql:") {
+    throw new Error(
+      "DATABASE_URL must use the postgres:// or postgresql:// scheme",
+    )
+  }
+  if (!parsed.hostname && !parsed.pathname.replace(/^\/+/, "")) {
+    throw new Error("DATABASE_URL must include a database name")
+  }
+
+  return databaseUrl
+}
+
+const readDriver = (): DatabaseSelection => {
+  const driver = (process.env.DATABASE_DRIVER ?? "postgres")
+    .trim()
+    .toLowerCase()
+  if (driver === "pglite") {
+    return {
+      databaseUrl: null,
+      pgliteDataDir: process.env.PGLITE_DATA_DIR?.trim() || ".pglite",
+    }
+  }
+  if (driver !== "postgres") {
+    throw new Error('DATABASE_DRIVER must be either "postgres" or "pglite"')
+  }
+  return { databaseUrl: readPostgresUrl(), pgliteDataDir: null }
 }
 
 export const loadConfig = (): ServerConfig => {
@@ -50,6 +86,10 @@ export const loadConfig = (): ServerConfig => {
     databaseUrl: database.databaseUrl,
     pgliteDataDir: database.pgliteDataDir,
     corsOrigin: process.env.CORS_ORIGIN ?? "http://localhost:5173",
+    cookieSecure:
+      process.env.COOKIE_SECURE === "true" ||
+      (process.env.COOKIE_SECURE !== "false" &&
+        process.env.NODE_ENV === "production"),
     hocuspocusDebounceMs: readPositiveInt("HOCUSPOCUS_DEBOUNCE_MS", 2000),
     hocuspocusMaxDebounceMs: readPositiveInt("HOCUSPOCUS_MAX_DEBOUNCE_MS", 10000),
     // Keeping rows is always safe. The default prunes only after an atomic

@@ -1,138 +1,109 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { beforeEach, describe, expect, it, vi } from "vitest"
+import { ApiError, setCsrfToken } from "./apiClient.ts"
 import { boardService } from "./boardService.ts"
-import type { CanvasElement } from "../types/canvas.ts"
 
-const BOARDS_KEY = "confluo:boards"
+const json = (body: unknown, status = 200): Response =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  })
 
-class MemoryStorage implements Storage {
-  private values = new Map<string, string>()
-  get length() {
-    return this.values.size
-  }
-  clear() {
-    this.values.clear()
-  }
-  getItem(key: string) {
-    return this.values.get(key) ?? null
-  }
-  key(index: number) {
-    return [...this.values.keys()][index] ?? null
-  }
-  removeItem(key: string) {
-    this.values.delete(key)
-  }
-  setItem(key: string, value: string) {
-    this.values.set(key, value)
-  }
+const apiBoard = {
+  id: "7f4c9a54-0c3e-4b75-8f11-0bfee9f5a2a1",
+  title: "Product discovery",
+  ownerId: "user-a",
+  role: "owner" as const,
+  createdAt: "2026-01-01T00:00:00.000Z",
+  updatedAt: "2026-01-02T00:00:00.000Z",
 }
 
-const element = (id: string, overrides: Partial<CanvasElement> = {}): CanvasElement => ({
-  id,
-  type: "rectangle",
-  x: 0,
-  y: 0,
-  width: 100,
-  height: 100,
-  rotation: 0,
-  style: { fill: "#ffffff", stroke: "#20201f", strokeWidth: 1, opacity: 1 },
-  createdBy: "owner",
-  ...overrides,
-})
+let fetchMock: ReturnType<typeof vi.fn>
 
 beforeEach(() => {
-  vi.stubGlobal("localStorage", new MemoryStorage())
-})
-
-afterEach(() => {
-  vi.unstubAllGlobals()
+  setCsrfToken(null)
+  fetchMock = vi.fn()
+  vi.stubGlobal("fetch", fetchMock)
 })
 
 describe("boardService", () => {
-  it("creates boards with a unique id and no elements", () => {
-    const board = boardService.create("owner-1")
-    expect(board.id).toBeTruthy()
-    expect(board.elements).toEqual([])
-    expect(board.title).toBe("Untitled whiteboard")
+  it("loads only server-provided board summaries", async () => {
+    fetchMock.mockResolvedValueOnce(json({ boards: [apiBoard] }))
 
-    const ids = new Set(Array.from({ length: 50 }, () => boardService.create("owner-1").id))
-    expect(ids.size).toBe(50)
-  })
+    const boards = await boardService.list()
 
-  it("lists only the owner's boards and gives new owners a starter board", () => {
-    boardService.create("owner-1", "Mine")
-    boardService.create("owner-2", "Theirs")
-
-    const mine = boardService.list("owner-1")
-    expect(mine.map((board) => board.title)).toEqual(["Mine"])
-
-    const fresh = boardService.list("owner-3")
-    expect(fresh).toHaveLength(1)
-    expect(fresh[0].elements.length).toBeGreaterThan(0)
-  })
-
-  it("keeps board documents isolated", () => {
-    const boardA = boardService.create("owner-1", "Board A")
-    const boardB = boardService.create("owner-1", "Board B")
-
-    boardService.update(boardA.id, { elements: [element("a-1")] })
-    boardService.update(boardB.id, { title: "Board B renamed" })
-
-    expect(boardService.get(boardA.id)?.elements.map((item) => item.id)).toEqual([
-      "a-1",
-    ])
-    expect(boardService.get(boardB.id)?.elements).toEqual([])
-    expect(boardService.get(boardB.id)?.title).toBe("Board B renamed")
-  })
-
-  it("persists renames through the stored document", () => {
-    const board = boardService.create("owner-1")
-    boardService.update(board.id, { title: "Renamed" })
-    expect(boardService.get(board.id)?.title).toBe("Renamed")
-    expect(boardService.list("owner-1")[0].title).toBe("Renamed")
-  })
-
-  it("duplicates content under a new id without mutating the source", () => {
-    const board = boardService.create("owner-1", "Source")
-    boardService.update(board.id, { elements: [element("a-1")] })
-    const copy = boardService.duplicate(board.id, "owner-2")
-
-    expect(copy.id).not.toBe(board.id)
-    expect(copy.ownerId).toBe("owner-2")
-    expect(copy.title).toBe("Source copy")
-    expect(copy.elements).toEqual([element("a-1")])
-    expect(boardService.get(board.id)?.elements).toHaveLength(1)
-  })
-
-  it("removes only the requested board", () => {
-    const boardA = boardService.create("owner-1")
-    const boardB = boardService.create("owner-1")
-    boardService.remove(boardA.id)
-    expect(boardService.get(boardA.id)).toBeNull()
-    expect(boardService.get(boardB.id)).not.toBeNull()
-  })
-
-  it("rejects updates and reads for unknown boards", () => {
-    expect(boardService.get("missing")).toBeNull()
-    expect(() => boardService.update("missing", { title: "x" })).toThrow(
-      "Board not found",
+    expect(boards).toHaveLength(1)
+    expect(boards[0]).toMatchObject({
+      id: apiBoard.id,
+      title: apiBoard.title,
+      permission: "owner",
+      elements: [],
+      members: [],
+    })
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("/api/boards"),
+      expect.objectContaining({ credentials: "include", method: "GET" }),
     )
   })
 
-  it("recovers from malformed stored elements", () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {})
-    const board = boardService.create("owner-1")
-    const stored = JSON.parse(localStorage.getItem(BOARDS_KEY) ?? "[]")
-    stored[0].elements = [
-      element("valid"),
-      { ...element("unknown"), type: "hologram" },
-      { ...element("broken"), style: {} },
-      element("valid", { type: "ellipse" }),
-    ]
-    localStorage.setItem(BOARDS_KEY, JSON.stringify(stored))
+  it("maps board members and keeps canvas elements Yjs-owned", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({
+        board: { ...apiBoard, role: "editor" },
+        members: [
+          {
+            userId: "user-b",
+            name: "Bob",
+            email: "bob@example.com",
+            role: "editor",
+            joinedAt: "2026-01-03T00:00:00.000Z",
+          },
+        ],
+      }),
+    )
 
-    const recovered = boardService.get(board.id)
-    expect(recovered?.elements.map((item) => item.id)).toEqual(["valid"])
-    expect(warn).toHaveBeenCalled()
-    warn.mockRestore()
+    const board = await boardService.get(apiBoard.id)
+
+    expect(board.permission).toBe("editor")
+    expect(board.elements).toEqual([])
+    expect(board.members[0]).toMatchObject({
+      userId: "user-b",
+      boardId: apiBoard.id,
+      role: "editor",
+      status: "offline",
+    })
+  })
+
+  it("sends CSRF-protected create and join requests", async () => {
+    setCsrfToken("csrf-value")
+    fetchMock
+      .mockResolvedValueOnce(json({ board: apiBoard }, 201))
+      .mockResolvedValueOnce(json({ board: apiBoard }))
+
+    await boardService.create("Product discovery")
+    await boardService.join(apiBoard.id)
+
+    const createOptions = fetchMock.mock.calls[0]?.[1] as RequestInit
+    const createHeaders = createOptions.headers as Headers
+    expect(createOptions.method).toBe("POST")
+    expect(createHeaders.get("X-CSRF-Token")).toBe("csrf-value")
+    expect(createOptions.body).toBe(
+      JSON.stringify({ title: "Product discovery" }),
+    )
+
+    const joinOptions = fetchMock.mock.calls[1]?.[1] as RequestInit
+    expect(joinOptions.body).toBe(JSON.stringify({ boardId: apiBoard.id }))
+  })
+
+  it("surfaces safe server errors without inventing local success", async () => {
+    fetchMock
+      .mockResolvedValueOnce(json({ error: "Board not found" }, 404))
+      .mockResolvedValueOnce(json({ error: "Board not found" }, 404))
+
+    await expect(boardService.get("missing")).rejects.toMatchObject({
+      name: "ApiError",
+      message: "Board not found",
+      status: 404,
+    })
+    await expect(boardService.get("missing")).rejects.toBeInstanceOf(ApiError)
   })
 })

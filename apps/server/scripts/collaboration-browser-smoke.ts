@@ -1,7 +1,31 @@
 import WebSocket from 'ws'
 import * as Y from 'yjs'
-import { HocuspocusProvider } from '@hocuspocus/provider'
+import {
+  HocuspocusProvider,
+  HocuspocusProviderWebsocket,
+} from '@hocuspocus/provider'
 import { createBoardDocument, projectElements } from '../../web/src/collab/document.ts'
+
+const APP_URL = 'http://localhost:5173'
+const API_URL = 'http://localhost:4000'
+const WS_URL = 'ws://localhost:4001'
+const PASSWORD = 'correct-horse-battery'
+const suffix = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
+
+interface ApiResult<T> {
+  ok: boolean
+  status: number
+  body: T
+}
+
+interface AuthResponse {
+  user: { id: string; name: string; email: string }
+  csrfToken: string
+}
+
+interface BoardResponse {
+  board: { id: string; title: string; role: 'owner' | 'editor' }
+}
 
 const browserInfo = await (await fetch('http://localhost:9222/json/version')).json()
 const browser = new WebSocket(browserInfo.webSocketDebuggerUrl)
@@ -34,10 +58,15 @@ const waitFor = async (predicate: () => boolean | Promise<boolean>, message: str
 class Page {
   session!: string
   targetId!: string
+  csrf = ''
   errors: string[] = []
-  constructor(public contextId: string) {}
+  constructor(public contextId: string, public label: string) {}
+
   async open() {
-    const target = await send('Target.createTarget', { url: 'http://localhost:5173/board/demo', browserContextId: this.contextId })
+    const target = await send('Target.createTarget', {
+      url: `${APP_URL}/`,
+      browserContextId: this.contextId,
+    })
     this.targetId = target.targetId
     this.session = (await send('Target.attachToTarget', { targetId: this.targetId, flatten: true })).sessionId
     await send('Runtime.enable', {}, this.session)
@@ -50,22 +79,97 @@ class Page {
       mobile: false,
     }, this.session)
     await send('Page.enable', {}, this.session)
-    for (const event of events) {
-      if (event.sessionId === this.session && event.method === 'Runtime.exceptionThrown') this.errors.push(event.params.exceptionDetails?.text ?? 'exception')
-    }
-    await waitFor(async () => (await this.eval<string>('document.querySelector(".connection-status")?.innerText ?? ""')).includes('Live · server sync'), 'page sync')
-    const errors = await this.eval<string[]>(`[...document.querySelectorAll('.connection-status')].map(x=>x.innerText)`)
-    console.log('page ready', errors)
+    await waitFor(async () => (await this.eval<string>('document.readyState')) === 'complete', 'landing page load')
   }
+
   async eval<T>(expression: string): Promise<T> {
     const result = await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true }, this.session)
     if (result.exceptionDetails) throw new Error(result.exceptionDetails.text)
     return result.result?.value as T
   }
+
+  async api<T>(path: string, init: RequestInit = {}): Promise<T> {
+    const request = {
+      method: init.method ?? 'GET',
+      headers: init.headers ?? {},
+      body: init.body,
+      credentials: 'include',
+    }
+    const expression = `(async () => {
+      const response = await fetch(${JSON.stringify(`${API_URL}${path}`)}, ${JSON.stringify(request)})
+      const text = await response.text()
+      let body = null
+      try { body = text ? JSON.parse(text) : null } catch { body = { error: text } }
+      return { ok: response.ok, status: response.status, body }
+    })()`
+    const result = await this.eval<ApiResult<T>>(expression)
+    if (!result.ok) {
+      const message = (result.body as { error?: string } | null)?.error ?? `HTTP ${result.status}`
+      throw new Error(`${this.label} API ${path} failed: ${message}`)
+    }
+    return result.body
+  }
+
+  async register(email: string, name: string) {
+    const body = await this.api<AuthResponse>('/api/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, email, password: PASSWORD }),
+    })
+    this.csrf = body.csrfToken
+  }
+
+  async createBoard(title: string): Promise<string> {
+    const body = await this.api<BoardResponse>('/api/boards', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRF-Token': this.csrf,
+      },
+      body: JSON.stringify({ title }),
+    })
+    return body.board.id
+  }
+
+  async joinBoard(boardId: string) {
+    await this.api<BoardResponse>('/api/boards/join', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRF-Token': this.csrf,
+      },
+      body: JSON.stringify({ boardId }),
+    })
+  }
+
+  async sessionCookie(): Promise<string> {
+    const result = await send('Storage.getCookies', { browserContextId: this.contextId })
+    const cookie = result.cookies.find((item: { name: string }) => item.name === 'confluo_session')
+    if (!cookie) throw new Error(`${this.label} has no session cookie`)
+    return `confluo_session=${cookie.value}`
+  }
+
+  async navigateToBoard(boardId: string) {
+    await send('Page.navigate', { url: `${APP_URL}/board/${boardId}` }, this.session)
+    await waitFor(
+      async () =>
+        (await this.eval<string>('document.querySelector(".connection-status")?.innerText ?? ""').catch(() => '')).includes('Live · server sync'),
+      `${this.label} board sync`,
+      20_000,
+    )
+    const status = await this.eval<string>('document.querySelector(".connection-status")?.innerText ?? ""')
+    const errorText = await this.eval<string>('document.body.innerText.slice(0, 300)')
+    if (!status.includes('Live · server sync')) {
+      throw new Error(`${this.label} did not sync: ${status}\n${errorText}`)
+    }
+  }
+
   async click(selector: string) { await this.eval(`document.querySelector(${JSON.stringify(selector)}).click()`) }
+
   async mouse(type: string, x: number, y: number, extra: any = {}) {
     await send('Input.dispatchMouseEvent', { type, x, y, ...extra }, this.session)
   }
+
   async drag(x1: number, y1: number, x2: number, y2: number) {
     await this.mouse('mousePressed', x1, y1, { button: 'left', buttons: 1, clickCount: 1 })
     for (let i = 1; i <= 5; i++) {
@@ -74,12 +178,15 @@ class Page {
     }
     await this.mouse('mouseReleased', x2, y2, { button: 'left', buttons: 0, clickCount: 1 })
   }
+
   async hash(): Promise<string> {
     return this.eval<string>(`(() => [...document.querySelectorAll('.canvas-host canvas')].map((c) => { const d = c.toDataURL(); let h = 2166136261; for (let i = 0; i < d.length; i += 89) h = Math.imul(h ^ d.charCodeAt(i), 16777619); return (h >>> 0).toString(16) }).join(':'))()`)
   }
+
   async regionHash(x: number, y: number, width: number, height: number): Promise<string> {
     return this.eval<string>(`(() => { const c = document.querySelectorAll('.canvas-host canvas')[0]; const d = c.getContext('2d').getImageData(${x}, ${y}, ${width}, ${height}).data; let h = 2166136261; for (let i = 0; i < d.length; i += 7) h = Math.imul(h ^ d[i], 16777619); return (h >>> 0).toString(16) })()`)
   }
+
   async reload() {
     const before = await this.eval<number>('performance.timeOrigin')
     await send('Page.reload', {}, this.session)
@@ -90,6 +197,7 @@ class Page {
       return status.includes('Live · server sync')
     }, 'page reload and resync', 10_000)
   }
+
   async close() {
     await send('Target.closeTarget', { targetId: this.targetId }).catch(() => undefined)
   }
@@ -97,23 +205,47 @@ class Page {
 
 const contextA = (await send('Target.createBrowserContext')).browserContextId
 const contextB = (await send('Target.createBrowserContext')).browserContextId
-const a = new Page(contextA)
-const b = new Page(contextB)
+const a = new Page(contextA, 'browser A')
+const b = new Page(contextB, 'browser B')
 await a.open()
 await b.open()
+await a.register(`alice-${suffix}@example.test`, 'Alice Smoke')
+await b.register(`bob-${suffix}@example.test`, 'Bob Smoke')
+
+const boardId = await a.createBoard(`Smoke ${suffix}`)
+await b.joinBoard(boardId)
+console.log('board created and joined', boardId)
+
+await a.navigateToBoard(boardId)
+await b.navigateToBoard(boardId)
+console.log('both browsers synced')
+
+const cookie = await a.sessionCookie()
+class CookieWebSocket extends WebSocket {
+  constructor(address: string, protocols?: string | string[]) {
+    super(address, protocols, {
+      headers: { Cookie: cookie, Origin: APP_URL },
+    })
+  }
+}
 
 const observerDoc = new Y.Doc()
 let observerSynced = false
+const observerWebsocket = new HocuspocusProviderWebsocket({
+  url: WS_URL,
+  WebSocketPolyfill: CookieWebSocket as unknown as typeof globalThis.WebSocket,
+})
 const observer = new HocuspocusProvider({
-  url: 'ws://localhost:4001',
-  name: 'confluo.board.demo',
+  websocketProvider: observerWebsocket,
+  name: `confluo.board.${boardId}`,
   document: observerDoc,
   onSynced: ({ state }) => { if (state) observerSynced = true },
   onAuthenticationFailed: ({ reason }) => { throw new Error(reason) },
 })
+observer.attach()
 await waitFor(() => observerSynced, 'observer sync')
-const document = createBoardDocument('demo', observerDoc)
-const elements = () => projectElements(document)
+const boardDocument = createBoardDocument(boardId, observerDoc)
+const elements = () => projectElements(boardDocument)
 console.log('initial elements', elements().length)
 
 const beforeCreate = await b.hash()
@@ -166,20 +298,21 @@ console.log('delete propagated')
 await b.mouse('mousePressed', 1200, 700, { button: 'left', buttons: 1, clickCount: 1 })
 await b.mouse('mouseReleased', 1200, 700, { button: 'left', buttons: 0, clickCount: 1 })
 
-// Let Hocuspocus' 2 s store debounce run, then prove a full page reload restores
-// the shared snapshot/log rather than the stale Slice A localStorage copy.
+// Let Hocuspocus' store debounce run, then prove a full page reload restores
+// the shared snapshot/log rather than a browser-local copy.
 await sleep(2500)
-// Serif/text antialiasing can differ after a font reload, so compare only the
-// region containing the moved rectangle. That region is empty in the legacy
-// localStorage copy and can only be restored from the shared Yjs state.
 const beforeReload = await b.regionHash(650, 500, 240, 180)
 await b.reload()
 await waitFor(async () => (await b.regionHash(650, 500, 240, 180)) === beforeReload, 'shared state after browser refresh', 10_000)
 console.log('refresh restored shared state')
 
-console.log('browser errors', a.errors, b.errors, events.filter(e => e.method === 'Runtime.exceptionThrown').map(e => e.params.exceptionDetails?.text))
+const pageErrors = events
+  .filter((event) => event.method === 'Runtime.exceptionThrown')
+  .map((event) => event.params.exceptionDetails?.text)
+console.log('page errors', pageErrors)
 
 observer.destroy()
+observerWebsocket.destroy()
 observerDoc.destroy()
 await a.close(); await b.close()
 await send('Target.disposeBrowserContext', { browserContextId: contextA }).catch(() => undefined)

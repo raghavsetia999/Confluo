@@ -5,7 +5,6 @@ import {
   Diamond,
   MousePointer2,
   PenLine,
-  Play,
   Share2,
   Sparkles,
   Square,
@@ -56,10 +55,9 @@ export default function LandingPage() {
             Start creating free
             <ArrowRight size={16} />
           </Link>
-          <Link className="secondary-button large" to="/board/demo">
-            <Play size={15} fill="currentColor" />
-            Explore live demo
-          </Link>
+          <a className="secondary-button large" href="#how">
+            See how it works
+          </a>
         </div>
         <div className="hero-proof">
           <span>
@@ -68,11 +66,11 @@ export default function LandingPage() {
           </span>
           <span>
             <Check size={13} />
-            Works offline
+            PostgreSQL-backed
           </span>
           <span>
             <Check size={13} />
-            Free to explore
+            Share by board ID
           </span>
         </div>
       </section>
@@ -81,7 +79,7 @@ export default function LandingPage() {
           <div>
             <Brand compact />
             <strong>Product discovery</strong>
-            <small>Saved locally</small>
+            <small>Stored on the server</small>
           </div>
           <div className="preview-avatars">
             <i>MC</i>
@@ -165,9 +163,10 @@ export default function LandingPage() {
             <span>
               <Sparkles />
             </span>
-            <h3>Every change remembered</h3>
+            <h3>Changes that stick</h3>
             <p>
-              Explore revisions, create checkpoints, and branch without fear.
+              Your board lives on the server and reloads with the same shared
+              state.
             </p>
           </article>
         </div>

@@ -1,9 +1,9 @@
 # Slice B: collaborative boards
 
-- **Status:** Implemented
+- **Status:** Implemented; accounts and memberships added
 - **Date:** 2026-10-24
-- **Scope:** shared canvas, server persistence, migration of old boards
-- **Not in scope:** authentication, presence, offline editing, revision history
+- **Scope:** shared canvas, server persistence, accounts, board membership, migration of old boards
+- **Not in scope:** presence, offline editing, password reset, email verification, MFA, user-visible revision history
 
 > This is the reader-friendly version of the detailed B0–B4 design notes. The
 > original audit and decision log remain in git history.
@@ -28,17 +28,19 @@ The important shift is ownership: **the browser is no longer the shared source
 of truth once a board is opened collaboratively.** The server holds the live
 document, and Yjs state in the database is the durable copy.
 
-Board titles, the dashboard list and the create/open routes still use local
-browser storage. Only canvas contents moved to Yjs.
+Board titles, the dashboard list, ownership and membership are now server-owned
+as well. The browser no longer stores the authoritative board list or auth
+tokens. Board ID sharing replaces the earlier local-only board discovery.
 
 ## 2. Big picture
 
 ```text
 Browser A ─┐
 Browser B ─┼── WebSocket :4001 ── Hocuspocus server ── PostgreSQL / PGlite
-Browser C ─┘                       one Y.Doc per board   snapshots + updates
+Browser C ─┘   session cookie +      one Y.Doc per board   users, boards,
+               membership check                            memberships, Yjs state
 
-Browser ──── HTTP :4000 ─────────── board registration, health checks
+Browser ──── HTTP :4000 ─────────── auth, boards, memberships
 ```
 
 | Part | Responsibility |
@@ -46,7 +48,7 @@ Browser ──── HTTP :4000 ─────────── board registra
 | Browser | Render the canvas, keep a temporary Y.Doc copy, show connection state |
 | Backend | Validate the board, merge updates, broadcast changes, persist state |
 | Database | Store the latest snapshot and the update log |
-| `localStorage` | Board list/title and the legacy canvas fallback, not live shared state |
+| `localStorage` | No authoritative board or auth data; only non-critical UI preferences |
 
 All users must connect to the same backend and the same board ID. Browsers never
 connect to the database directly.
@@ -118,13 +120,15 @@ A board ID must match:
 
 Before loading anything, the server:
 
-1. parses the document name,
-2. rejects malformed names,
-3. checks that the board exists,
-4. loads the document only for the validated board ID.
+1. rejects an unexpected browser `Origin`,
+2. parses the document name and rejects malformed names,
+3. authenticates the HttpOnly session cookie,
+4. checks that the authenticated user has a membership in the board,
+5. loads the document only for the validated board ID.
 
-The raw document name is never used as a database key. A malformed name or
-unknown board is rejected before any document state is loaded.
+The raw document name is never used as a database key. A malformed name, unknown
+board, missing session, or non-member is rejected before any document state is
+loaded. The WebSocket connection does not rely on board IDs as authorization.
 
 Each opened board gets one Y.Doc, one provider and one canvas binding. The
 session is cleaned up when the board changes, the user navigates away, the
@@ -155,7 +159,10 @@ The database has three relevant tables:
 
 | Table | Purpose |
 |---|---|
+| `users` | Account identity, normalized email, scrypt password hash |
+| `auth_sessions` | Hashed session tokens and expiry |
 | `boards` | Board ID, title, owner, legacy Slice A JSON |
+| `board_memberships` | Owner/editor membership and access checks |
 | `board_documents` | One full Yjs snapshot per board plus a watermark |
 | `board_updates` | Append-only binary Yjs updates received since the snapshot |
 
@@ -190,8 +197,10 @@ harmless because Yjs updates are idempotent.
 Graceful shutdown flushes pending writes and checkpoints. Snapshots are internal
 recovery points, not user-visible version history.
 
-Local development uses PGlite, which runs PostgreSQL in-process. Production uses
-the normal PostgreSQL adapter and the same schema and SQL.
+Local development and the automated test suite use PGlite, which runs PostgreSQL
+in-process. Production uses the normal PostgreSQL adapter and the same schema
+and SQL. The PostgreSQL adapter was exercised against a real PostgreSQL 18.6
+server, including the two-browser authenticated smoke test.
 
 ## 8. Multiple users and conflicts
 
@@ -239,27 +248,38 @@ every open.
 Once collaboration is active, canvas commits no longer write to the old JSON.
 Legacy JSON remains a read-only fallback.
 
-Board discovery and opening are still local: another person cannot see or open a
-newly created board from their own browser yet. This is separate from document
-persistence.
+Board discovery is now server-backed. Owners and joined editors see their boards
+in the dashboard. A signed-in user can join by entering the board ID; the server
+creates an editor membership transactionally. The ID is an identifier, not a
+password, and the current policy intentionally allows any signed-in holder to
+join.
 
 ## 10. Security
 
-> **Do not deploy this milestone publicly or with private boards yet.**
+Accounts and board authorization are now implemented:
 
-- There is no authentication or authorization.
-- Board ID validation proves that a board exists, not that the caller may use it.
-- The WebSocket server does not authenticate a user or verify ownership.
-- CORS can restrict HTTP calls but is not access control for WebSockets.
-- Anyone who can reach the collaboration port and knows or guesses a valid board
-  ID can join that board.
+- Passwords are hashed with scrypt and a random salt.
+- Sessions are random tokens stored only as SHA-256 hashes; the raw token is in
+  an HttpOnly, SameSite=Lax cookie (Secure in production).
+- Authenticated mutations require a session-bound CSRF token and a same-origin
+  browser request.
+- Every HTTP board read/write checks the authenticated user's membership.
+- Every WebSocket connection checks origin, session cookie and board membership
+  before loading Yjs state.
+- Unknown or malformed board IDs return safe errors.
 
-This is safe only on localhost or another trusted development machine.
+Remaining constraints:
+
+- A board ID is an identifier, not a password. Any signed-in user who has a
+  valid ID can join as an editor in this milestone.
+- Login rate limiting is in-process and intended for one server process.
+- There is no email verification, password reset, MFA or invite approval.
+- PGlite is a local-development fallback, not a production database server.
 
 ## 11. Known limitations
 
-- No accounts, teams, permissions or board membership
-- Board list and titles still live in browser storage
+- No teams, invite approval or viewer-only membership
+- No email verification, password reset or MFA
 - No presence, cursors or avatar awareness
 - No offline queue, `y-indexeddb` or disconnected editing
 - No collaborative undo/redo
@@ -267,8 +287,9 @@ This is safe only on localhost or another trusted development machine.
 - Text conflicts are last-writer-wins
 - Deleted-element tombstones are retained for the life of the document
 - One backend process only; no Redis or multi-node Hocuspocus
-- PGlite is for local development; the PostgreSQL adapter has not yet been
-  validated against a real PostgreSQL server in this environment
+- PGlite is for local development; the full automated suite runs against it.
+  The browser smoke flow was also verified against a real PostgreSQL 18.6
+  server, including migrations, accounts, memberships and Yjs persistence.
 
 ## 12. Code map
 
@@ -284,8 +305,11 @@ This is safe only on localhost or another trusted development machine.
 | Serial queue, load, append, checkpoint | `apps/server/src/collaboration/documentPersistence.ts` |
 | Snapshot/update SQL | `apps/server/src/collaboration/documentRepository.ts` |
 | Schema migrations | `apps/server/src/db/migrations.ts` |
-| HTTP API and board registration | `apps/server/src/http/app.ts` |
-| Two-browser smoke test | `apps/server/scripts/collaboration-browser-smoke.ts` |
+| Authentication and session service | `apps/server/src/auth/` |
+| HTTP auth, board and membership API | `apps/server/src/http/app.ts` |
+| Password hashing | `apps/server/src/auth/password.ts` |
+| Board membership repository | `apps/server/src/boards/boardRepository.ts` |
+| Two-browser authenticated smoke test | `apps/server/scripts/collaboration-browser-smoke.ts` |
 
 ## 13. Checks
 
@@ -300,8 +324,12 @@ npm run test:browser --workspace @confluo/server
 The browser smoke test needs the web/server stack and Chrome remote debugging on
 port 9222. The other commands run without a browser.
 
-The tests cover legacy migration, reload after restart, replay after a snapshot,
-board isolation, unknown-board rejection, two-client create/move/text/delete
+The server tests cover account creation, password hashing, email normalization,
+login/logout, session restoration, CSRF rejection, board creation, join by ID,
+owner-only rename/delete, membership isolation, persistence across an app
+restart, legacy migration, reload after restart, board isolation, and anonymous
+or non-member WebSocket rejection. The browser smoke test covers two
+authenticated contexts, board sharing by ID, two-client create/move/text/delete
 (including a move from each browser), and refresh recovery.
 
 ## Glossary

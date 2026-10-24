@@ -25,16 +25,6 @@ const env = import.meta.env as Record<string, string | undefined>
 
 const trimTrailingSlash = (value: string): string => value.replace(/\/+$/, "")
 
-export const apiBaseUrl = (): string => {
-  const configured = env.VITE_API_URL?.trim()
-  if (configured) return trimTrailingSlash(configured)
-  const host =
-    typeof globalThis.location === "object" && globalThis.location.hostname
-      ? globalThis.location.hostname
-      : "localhost"
-  return `http://${host}:4000`
-}
-
 export const collaborationWebSocketUrl = (): string => {
   const configured = env.VITE_COLLAB_WS_URL?.trim()
   if (configured) return trimTrailingSlash(configured)
@@ -49,38 +39,6 @@ export const collaborationWebSocketUrl = (): string => {
 }
 
 /**
- * Idempotently register the local Slice A board before connecting. The server
- * stores this document only as a one-time migration fallback and never writes
- * it over an existing Yjs snapshot.
- */
-export const registerBoard = async (
-  board: Whiteboard,
-  signal?: AbortSignal,
-): Promise<void> => {
-  const response = await fetch(
-    `${apiBaseUrl()}/api/boards/${encodeURIComponent(board.id)}`,
-    {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        title: board.title,
-        ownerId: board.ownerId,
-        // The B1 migration helper only needs the element array. Revisions,
-        // branches and other Slice A metadata stay local.
-        document: { elements: board.elements },
-      }),
-      signal,
-    },
-  )
-  if (!response.ok) {
-    throw new Error(`Board registration failed with HTTP ${response.status}`)
-  }
-}
-
-const isAbortError = (error: unknown): boolean =>
-  error instanceof DOMException && error.name === "AbortError"
-
-/**
  * Owns exactly one Y.Doc, Hocuspocus provider and Fabric binding for one board.
  * It is intentionally outside React so StrictMode remounts, board changes and
  * unmounts have one deterministic cleanup path.
@@ -92,7 +50,6 @@ export class BoardCollaborationSession {
   private readonly onRemoteProjection:
     | CollaborationSessionOptions["onRemoteProjection"]
     | undefined
-  private readonly abortController = new AbortController()
   private doc: Y.Doc | null = null
   private provider: HocuspocusProvider | null = null
   private binding: CanvasBinding | null = null
@@ -110,9 +67,6 @@ export class BoardCollaborationSession {
   async start(): Promise<void> {
     this.emit("connecting", false)
     try {
-      await registerBoard(this.board, this.abortController.signal)
-      if (!this.active) return
-
       const doc = new Y.Doc()
       this.doc = doc
       const configuration: HocuspocusProviderConfiguration = {
@@ -148,8 +102,8 @@ export class BoardCollaborationSession {
         },
       }
       this.provider = new HocuspocusProvider(configuration)
-    } catch (error) {
-      if (this.active && !isAbortError(error)) this.fail()
+    } catch {
+      if (this.active) this.fail()
     }
   }
 
@@ -158,9 +112,9 @@ export class BoardCollaborationSession {
     if (this.binding) return
     const boardDocument = createBoardDocument(this.board.id, this.provider.document)
     const elements = projectElements(boardDocument)
-    // The canvas may already contain the stale local copy from localStorage.
-    // One full reconciliation is correct here; all later remote changes use
-    // CanvasBinding's incremental, per-id projection.
+    // The store starts with an empty canvas for every server-backed board. One
+    // full reconciliation installs the shared projection; all later remote
+    // changes use CanvasBinding's incremental, per-id projection.
     this.source.setElements(elements)
     this.binding = new CanvasBinding(this.source, boardDocument, {
       onRemoteProjection: this.onRemoteProjection,
@@ -190,7 +144,6 @@ export class BoardCollaborationSession {
   stop(): void {
     if (!this.active) return
     this.active = false
-    this.abortController.abort()
     this.disposeTransport()
   }
 }

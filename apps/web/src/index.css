@@ -1029,6 +1029,11 @@ body {
   color: var(--muted);
   font-size: 11px;
 }
+.dashboard-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 .board-section-header {
   display: flex;
   align-items: center;
@@ -1128,6 +1133,15 @@ body {
   margin-top: 4px;
   color: var(--muted);
   font-size: 8px;
+}
+.board-copy .board-id {
+  overflow: hidden;
+  margin-top: 3px;
+  color: var(--faint);
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 7px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .card-menu-button {
   position: absolute;
@@ -1312,6 +1326,77 @@ body {
 .modal-actions.padded {
   padding: 0 20px 20px;
 }
+.modal-form {
+  display: grid;
+  gap: 12px;
+  padding: 0 20px 20px;
+}
+.modal-form label {
+  display: grid;
+  gap: 6px;
+  color: var(--ink);
+  font-size: 9px;
+  font-weight: 600;
+}
+.modal-form input {
+  height: 38px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  outline: 0;
+  font-size: 11px;
+}
+.modal-form input:focus {
+  border-color: var(--accent);
+}
+.modal-form .modal-actions {
+  margin-top: 4px;
+}
+.dialog-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 8px;
+  line-height: 1.6;
+}
+.share-id-block {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0 20px 10px;
+  padding: 11px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: white;
+}
+.share-id-block > span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 7px;
+  background: var(--soft);
+  color: var(--accent);
+}
+.share-id-block > div {
+  flex: 1;
+  min-width: 0;
+}
+.share-id-block strong,
+.share-id-block code {
+  display: block;
+}
+.share-id-block strong {
+  font-size: 9px;
+}
+.share-id-block code {
+  margin-top: 3px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .share-form {
   display: flex;
   gap: 7px;
@@ -1364,7 +1449,7 @@ body {
   display: flex;
   align-items: center;
   gap: 9px;
-  margin: 0 20px;
+  margin: 0 20px 10px;
   padding: 11px;
   border: 1px solid var(--border);
   border-radius: 9px;
@@ -1397,6 +1482,9 @@ body {
   padding: 18px 20px 10px;
 }
 .access-list h3 {
+  display: flex;
+  align-items: center;
+  gap: 5px;
   margin: 0 0 8px;
   font-size: 10px;
 }
@@ -2057,6 +2145,16 @@ body {
   color: var(--muted);
   font-size: 8px;
 }
+.history-unavailable {
+  margin: 0 16px 12px;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--soft);
+  color: var(--muted);
+  font-size: 8px;
+  line-height: 1.55;
+}
 .branch-select {
   display: flex;
   align-items: center;
@@ -2523,6 +2621,10 @@ body {
   }
   .dashboard-heading h1 {
     font-size: 22px;
+  }
+  .dashboard-heading-actions {
+    flex-direction: column;
+    align-items: stretch;
   }
   .boards.grid {
     grid-template-columns: 1fr;

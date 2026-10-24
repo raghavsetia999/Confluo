@@ -24,3 +24,5 @@ export interface Whiteboard {
   branches: RevisionBranch[]
   activeBranchId: string
 }
+
+export type BoardRole = Whiteboard["permission"]

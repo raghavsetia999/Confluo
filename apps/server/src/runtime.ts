@@ -1,5 +1,6 @@
 import { createServer } from "node:http"
 import type { AddressInfo } from "node:net"
+import { AuthService } from "./auth/authService.ts"
 import { BoardRepository } from "./boards/boardRepository.ts"
 import { DocumentPersistence } from "./collaboration/documentPersistence.ts"
 import { DocumentRepository } from "./collaboration/documentRepository.ts"
@@ -70,6 +71,7 @@ export const startRuntime = async (
   try {
     await runMigrations(database)
     const boards = new BoardRepository(database)
+    const auth = new AuthService(database)
     const documents = new DocumentRepository(database)
     const persistence = new DocumentPersistence(boards, documents, {
       pruneUpdateLog: options.config.pruneUpdateLog,
@@ -77,9 +79,11 @@ export const startRuntime = async (
     })
 
     const app = createHttpApp({
+      auth,
       boards,
       database,
       corsOrigin: options.config.corsOrigin,
+      cookieSecure: options.config.cookieSecure,
       logger,
     })
     httpServer = createServer(app)
@@ -88,6 +92,8 @@ export const startRuntime = async (
     collaboration = createCollaborationServer({
       port: options.config.hocuspocusPort,
       boards,
+      auth,
+      allowedOrigin: options.config.corsOrigin,
       persistence,
       debounceMs: options.config.hocuspocusDebounceMs,
       maxDebounceMs: options.config.hocuspocusMaxDebounceMs,

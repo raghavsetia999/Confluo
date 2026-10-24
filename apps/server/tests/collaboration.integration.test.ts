@@ -17,6 +17,7 @@ import {
   connectClient,
   createTestDatabase,
   seedBoard,
+  seedUser,
   startTestCollaboration,
   waitFor,
   waitForSynced,
@@ -182,9 +183,10 @@ describe("B4 Hocuspocus transport", () => {
     const boardId = "board-live"
     await seedBoard(db, { id: boardId, elements: [element()] })
     const server = await collaboration(db)
+    const cookie = await server.cookieFor("test-user")
 
-    const first = connectClient(server.port, boardId)
-    const second = connectClient(server.port, boardId)
+    const first = connectClient(server.port, boardId, { cookie })
+    const second = connectClient(server.port, boardId, { cookie })
     cleanups.push(() => first.destroy(), () => second.destroy())
     await Promise.all([waitForSynced(first), waitForSynced(second)])
 
@@ -235,9 +237,10 @@ describe("B4 Hocuspocus transport", () => {
     await seedBoard(db, { id: "board-a", elements: [element({ id: "only-a" })] })
     await seedBoard(db, { id: "board-b", elements: [element({ id: "only-b" })] })
     const server = await collaboration(db)
+    const cookie = await server.cookieFor("test-user")
 
-    const first = connectClient(server.port, "board-a")
-    const second = connectClient(server.port, "board-b")
+    const first = connectClient(server.port, "board-a", { cookie })
+    const second = connectClient(server.port, "board-b", { cookie })
     cleanups.push(() => first.destroy(), () => second.destroy())
     await Promise.all([waitForSynced(first), waitForSynced(second)])
 
@@ -254,19 +257,69 @@ describe("B4 Hocuspocus transport", () => {
     expect(readElement(secondDocument, "only-b")).not.toBeNull()
   })
 
-  it("rejects malformed names and unknown boards before loading", async () => {
+  it("rejects malformed names, unknown boards and anonymous clients", async () => {
     const db = await database()
+    await seedUser(db)
     const server = await collaboration(db)
+    const cookie = await server.cookieFor("test-user")
 
-    const missing = connectClient(server.port, "board-does-not-exist")
+    const anonymous = connectClient(server.port, "board-does-not-exist")
+    cleanups.push(() => anonymous.destroy())
+    await expect(anonymous.authenticationError).resolves.toBe(
+      "permission-denied",
+    )
+
+    const missing = connectClient(server.port, "board-does-not-exist", {
+      cookie,
+    })
     cleanups.push(() => missing.destroy())
     await expect(missing.authenticationError).resolves.toBe("permission-denied")
 
     const malformed = connectClient(server.port, "irrelevant", {
       rawDocumentName: "confluo.board../escape",
+      cookie,
     })
     cleanups.push(() => malformed.destroy())
     await expect(malformed.authenticationError).resolves.toBe(
+      "permission-denied",
+    )
+  })
+
+  it("rejects a WebSocket from an unexpected browser origin", async () => {
+    const db = await database()
+    const boardId = "board-origin"
+    await seedBoard(db, { id: boardId })
+    const server = await collaboration(db)
+    const cookie = await server.cookieFor("test-user")
+
+    const crossOrigin = connectClient(server.port, boardId, {
+      cookie,
+      origin: "http://evil.example",
+    })
+    cleanups.push(() => crossOrigin.destroy())
+    await expect(crossOrigin.authenticationError).resolves.toBe(
+      "permission-denied",
+    )
+
+    const allowed = connectClient(server.port, boardId, {
+      cookie,
+      origin: "http://localhost:5173",
+    })
+    cleanups.push(() => allowed.destroy())
+    await waitForSynced(allowed)
+  })
+
+  it("denies a signed-in user who is not a board member", async () => {
+    const db = await database()
+    const boardId = "board-private"
+    await seedBoard(db, { id: boardId, ownerId: "owner-user" })
+    await seedUser(db, { id: "other-user" })
+    const server = await collaboration(db)
+    const cookie = await server.cookieFor("other-user")
+
+    const outsider = connectClient(server.port, boardId, { cookie })
+    cleanups.push(() => outsider.destroy())
+    await expect(outsider.authenticationError).resolves.toBe(
       "permission-denied",
     )
   })
@@ -276,8 +329,9 @@ describe("B4 Hocuspocus transport", () => {
     const boardId = "board-restart"
     await seedBoard(db, { id: boardId, elements: [element()] })
     const firstServer = await startTestCollaboration(db)
+    const cookie = await firstServer.cookieFor("test-user")
 
-    const first = connectClient(firstServer.port, boardId)
+    const first = connectClient(firstServer.port, boardId, { cookie })
     await waitForSynced(first)
     const firstDocument = createBoardDocument(boardId, first.doc)
     writeElement(firstDocument, {
@@ -301,7 +355,7 @@ describe("B4 Hocuspocus transport", () => {
 
     const secondServer = await startTestCollaboration(db)
     cleanups.push(() => secondServer.stop())
-    const second = connectClient(secondServer.port, boardId)
+    const second = connectClient(secondServer.port, boardId, { cookie })
     cleanups.push(() => second.destroy())
     await waitForSynced(second)
 

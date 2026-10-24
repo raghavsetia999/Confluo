@@ -46,12 +46,16 @@ export default function HistoryPanel({ close }: { close: () => void }) {
       <header>
         <div>
           <h2>Version history</h2>
-          <p>Local snapshots for this board</p>
+          <p>Not available for server-backed boards yet</p>
         </div>
         <button className="icon-button" onClick={close}>
           <X size={18} />
         </button>
       </header>
+      <p className="history-unavailable">
+        The shared canvas is persisted by the collaboration server. Checkpoints,
+        branches and restore are disabled in this version.
+      </p>
       <div className="branch-select">
         <span>
           <GitBranch size={15} />
@@ -59,6 +63,7 @@ export default function HistoryPanel({ close }: { close: () => void }) {
         </span>
         <select
           value={board.activeBranchId}
+          disabled
           onChange={(event) => switchBranch(event.target.value)}
         >
           {board.branches.map((item) => (
@@ -71,10 +76,11 @@ export default function HistoryPanel({ close }: { close: () => void }) {
       <div className="checkpoint-form">
         <input
           value={name}
+          disabled
           onChange={(event) => setName(event.target.value)}
           placeholder="Name this checkpoint"
         />
-        <button className="primary-button" onClick={save}>
+        <button className="primary-button" disabled onClick={save}>
           <Save size={14} />
           Save
         </button>
@@ -84,7 +90,7 @@ export default function HistoryPanel({ close }: { close: () => void }) {
           <div className="history-empty">
             <Save size={22} />
             <strong>No checkpoints yet</strong>
-            <p>Create one before exploring a risky idea.</p>
+            <p>Yjs keeps the live canvas; named history is not enabled.</p>
           </div>
         ) : (
           board.revisions.map((revision) => (
@@ -136,7 +142,7 @@ export default function HistoryPanel({ close }: { close: () => void }) {
       <footer>
         <button
           className="secondary-button"
-          disabled={!selected}
+          disabled
           onClick={() => setCompare(!compare)}
         >
           <ArrowLeftRight size={14} />
@@ -144,7 +150,7 @@ export default function HistoryPanel({ close }: { close: () => void }) {
         </button>
         <button
           className="secondary-button"
-          disabled={!selected}
+          disabled
           onClick={() =>
             selected && branch(selected, `Branch ${board.branches.length + 1}`)
           }
@@ -154,7 +160,7 @@ export default function HistoryPanel({ close }: { close: () => void }) {
         </button>
         <button
           className="primary-button"
-          disabled={!selected}
+          disabled
           onClick={() => selected && restore(selected)}
         >
           <RotateCcw size={14} />
@@ -162,7 +168,7 @@ export default function HistoryPanel({ close }: { close: () => void }) {
         </button>
       </footer>
       <small className="panel-disclaimer">
-        Local prototype history · not distributed CRDT history
+        Version history is not part of the current collaboration milestone
       </small>
     </aside>
   )

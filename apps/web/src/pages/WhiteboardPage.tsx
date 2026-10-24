@@ -1,7 +1,6 @@
 import {
   ChevronDown,
   History,
-  LogIn,
   MoreHorizontal,
   Redo2,
   Settings,
@@ -20,95 +19,130 @@ import Brand from "../components/ui/Brand"
 import CanvasEditor from "../components/whiteboard/CanvasEditor"
 import ConnectionStatus from "../components/whiteboard/ConnectionStatus"
 import DrawingToolbar from "../components/whiteboard/DrawingToolbar"
-import { useAuthStore } from "../stores/authStore.ts"
 import { useEditorStore } from "../stores/editorStore.ts"
+import type { Whiteboard } from "../types/board.ts"
+
+function BoardTitleInput({ board }: { board: Whiteboard }) {
+  const rename = useEditorStore((state) => state.rename)
+  const [title, setTitle] = useState(board.title)
+
+  const saveTitle = () => {
+    const next = title.trim() || "Untitled whiteboard"
+    setTitle(next)
+    if (next !== board.title) void rename(next)
+  }
+
+  return (
+    <input
+      value={title}
+      onChange={(event) => setTitle(event.target.value)}
+      onBlur={saveTitle}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") event.currentTarget.blur()
+      }}
+      aria-label="Board title"
+    />
+  )
+}
 
 export default function WhiteboardPage() {
   const { boardId = "" } = useParams()
   const [params, setParams] = useSearchParams()
   const navigate = useNavigate()
-  const user = useAuthStore((state) => state.user)
   const editor = useEditorStore()
   const load = useEditorStore((state) => state.load)
   const [panel, setPanel] =
     useState<"share" | "history" | "voice" | "more" | null>(
       params.get("share") ? "share" : null,
     )
+
   useEffect(() => {
-    load(boardId)
+    void load(boardId)
   }, [boardId, load])
-  if (!editor.board)
-    return (
-      <main className="not-found">
-        <Brand />
-        <div>
-          <span>Missing board</span>
-          <h1>This whiteboard is unavailable.</h1>
-          <button
-            className="primary-button"
-            onClick={() => navigate(user ? "/dashboard" : "/")}
-          >
-            Go back
-          </button>
-        </div>
-      </main>
-    )
+
   const closePanel = () => {
     setPanel(null)
     params.delete("share")
     setParams(params, { replace: true })
   }
+
+  const board = editor.board?.id === boardId ? editor.board : null
+
+  if (!board) {
+    if (editor.loading || !editor.error) {
+      return (
+        <main className="not-found">
+          <Brand />
+          <div>
+            <span>Opening board</span>
+            <h1>Loading the shared canvas…</h1>
+          </div>
+        </main>
+      )
+    }
+    return (
+      <main className="not-found">
+        <Brand />
+        <div>
+          <span>Unavailable</span>
+          <h1>This whiteboard is unavailable.</h1>
+          <p>{editor.error}</p>
+          <button
+            className="primary-button"
+            onClick={() => navigate("/dashboard")}
+          >
+            Back to dashboard
+          </button>
+        </div>
+      </main>
+    )
+  }
+
   const exportBoard = () => {
-    const blob = new Blob([JSON.stringify(editor.board, null, 2)], {
+    const blob = new Blob([JSON.stringify(board, null, 2)], {
       type: "application/json",
     })
     const href = URL.createObjectURL(blob)
     const link = document.createElement("a")
     link.href = href
-    link.download = `${editor.board!.title.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}.json`
+    link.download = `${board.title.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}.json`
     link.click()
     URL.revokeObjectURL(href)
     setPanel(null)
   }
+
   return (
     <main className="whiteboard-page">
-      <CanvasEditor />
+      <CanvasEditor key={board.id} />
       <header className="board-topbar">
         <div className="board-identity">
           <button
             className="icon-button"
-            onClick={() => navigate(user ? "/dashboard" : "/")}
+            onClick={() => navigate("/dashboard")}
             aria-label="Back to workspace"
           >
             <Brand compact linked={false} />
           </button>
           <i />
           <div>
-            <input
-              value={editor.board.title}
-              onChange={(event) => editor.rename(event.target.value)}
-              onBlur={(event) => {
-                // Titles are persisted per keystroke; normalise once the user
-                // leaves the field so an empty or padded title is never stored.
-                const title = event.target.value.trim()
-                if (!title) editor.rename("Untitled whiteboard")
-                else if (title !== event.target.value) editor.rename(title)
-              }}
-              aria-label="Board title"
-            />
+            <BoardTitleInput key={board.id} board={board} />
             <span>
-              {boardId === "demo"
-                ? "Public demo · shared canvas"
-                : "Collaborative whiteboard"}
+              Collaborative whiteboard ·{" "}
+              {board.permission === "owner" ? "owned by you" : "joined"}
             </span>
           </div>
         </div>
         <div className="board-actions">
           <div className="collaborators">
-            <Avatar name="Maya Chen" color="coral" status="online" />
-            <Avatar name="Theo Lane" color="blue" status="online" />
-            <Avatar name="Nora Kim" color="green" status="idle" />
-            <span>Demo</span>
+            {board.members.slice(0, 3).map((member) => (
+              <Avatar
+                key={member.userId}
+                name={member.name}
+                color={member.role === "owner" ? "coral" : "blue"}
+                status="offline"
+              />
+            ))}
+            <span>{board.members.length}</span>
           </div>
           <button
             className="top-button"
@@ -168,34 +202,25 @@ export default function WhiteboardPage() {
           ?
         </button>
       </div>
-      {panel === "share" && <ShareDialog onClose={closePanel} />}
+      {panel === "share" && (
+        <ShareDialog board={board} onClose={closePanel} />
+      )}
       {panel === "history" && <HistoryPanel close={closePanel} />}
       {panel === "voice" && <VoicePanel close={closePanel} />}
       {panel === "more" && (
         <div className="board-more-menu">
-          {user ? (
-            <Link to="/settings">
-              <Settings size={15} />
-              Preferences
-            </Link>
-          ) : (
-            <Link to="/signup">
-              <LogIn size={15} />
-              Create an account
-            </Link>
-          )}
+          <Link to="/settings">
+            <Settings size={15} />
+            Preferences
+          </Link>
           <button onClick={() => setPanel("share")}>
             <Users size={15} />
             Manage collaborators
           </button>
           <button
-            disabled={editor.collaborationActive}
-            onClick={() => {
-              editor.checkpoint(
-                `Checkpoint ${editor.board!.revisions.length + 1}`,
-              )
-              setPanel("history")
-            }}
+            disabled
+            title="Version history is not available for server-backed boards yet"
+            onClick={() => setPanel("history")}
           >
             <History size={15} />
             Quick checkpoint

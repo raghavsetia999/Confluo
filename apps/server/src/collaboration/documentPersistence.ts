@@ -127,6 +127,7 @@ export class DocumentPersistence {
           watermark,
           this.pruneUpdateLog,
         )
+        await this.boards.touch(boardId)
         this.logger.info(
           `[collaboration] checkpoint board=${boardId} watermark=${watermark} bytes=${snapshot.byteLength}`,
         )

@@ -5,6 +5,7 @@ import type { Whiteboard } from "../../types/board.ts"
 export default function BoardCard({
   board,
   view,
+  canManage,
   onOpen,
   onRename,
   onDuplicate,
@@ -13,6 +14,7 @@ export default function BoardCard({
 }: {
   board: Whiteboard
   view: "grid" | "list"
+  canManage: boolean
   onOpen: () => void
   onRename: () => void
   onDuplicate: () => void
@@ -46,7 +48,12 @@ export default function BoardCard({
         </div>
         <div className="board-copy">
           <strong>{board.title}</strong>
-          <span>Edited {edited}</span>
+          <span>
+            {edited} · {board.permission === "owner" ? "Owned" : "Joined"}
+          </span>
+          <span className="board-id" title={board.id}>
+            ID {board.id}
+          </span>
         </div>
       </button>
       <button
@@ -58,10 +65,12 @@ export default function BoardCard({
       </button>
       {menu && (
         <div className="card-menu">
-          <button onClick={onRename}>
-            <Pencil size={14} />
-            Rename
-          </button>
+          {canManage && (
+            <button onClick={onRename}>
+              <Pencil size={14} />
+              Rename
+            </button>
+          )}
           <button onClick={onDuplicate}>
             <Copy size={14} />
             Duplicate
@@ -70,11 +79,15 @@ export default function BoardCard({
             <Share2 size={14} />
             Share
           </button>
-          <hr />
-          <button className="danger" onClick={onDelete}>
-            <Trash2 size={14} />
-            Delete
-          </button>
+          {canManage && (
+            <>
+              <hr />
+              <button className="danger" onClick={onDelete}>
+                <Trash2 size={14} />
+                Delete
+              </button>
+            </>
+          )}
         </div>
       )}
     </article>

@@ -19,8 +19,8 @@ export default function SignupPage() {
     if (name.trim().length < 2) return setValidation("Tell us your name.")
     if (!email.includes("@"))
       return setValidation("Enter a valid email address.")
-    if (password.length < 6)
-      return setValidation("Password must be at least 6 characters.")
+    if (password.length < 8)
+      return setValidation("Password must be at least 8 characters.")
     setValidation("")
     try {
       await signup(name.trim(), email, password)
@@ -67,7 +67,7 @@ export default function SignupPage() {
               type={show ? "text" : "password"}
               value={password}
               onChange={(event) => setPassword(event.target.value)}
-              placeholder="At least 6 characters"
+              placeholder="At least 8 characters"
               autoComplete="new-password"
             />
             <button type="button" onClick={() => setShow(!show)}>
@@ -76,9 +76,9 @@ export default function SignupPage() {
           </div>
         </label>
         <div className="password-hint">
-          <span className={password.length >= 6 ? "valid" : ""}>
+          <span className={password.length >= 8 ? "valid" : ""}>
             <Check size={12} />
-            6+ characters
+            8+ characters
           </span>
           <span className={/[0-9]/.test(password) ? "valid" : ""}>
             <Check size={12} />A number recommended

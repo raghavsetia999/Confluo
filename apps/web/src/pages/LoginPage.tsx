@@ -16,9 +16,9 @@ export default function LoginPage() {
   const submit = async (event: FormEvent) => {
     event.preventDefault()
     clearError()
-    if (!email.includes("@") || password.length < 6)
+    if (!email.includes("@") || password.length < 8)
       return setValidation(
-        "Enter a valid email and a password with at least 6 characters.",
+        "Enter a valid email and a password with at least 8 characters.",
       )
     setValidation("")
     try {
@@ -43,20 +43,6 @@ export default function LoginPage() {
       }
     >
       <form className="auth-form" onSubmit={submit}>
-        <button
-          className="google-button"
-          type="button"
-          onClick={() =>
-            setValidation(
-              "Google sign-in requires backend OAuth configuration.",
-            )
-          }
-        >
-          <strong>G</strong>Continue with Google
-        </button>
-        <div className="or-divider">
-          <span>or continue with email</span>
-        </div>
         <label>
           Email address
           <input
@@ -74,7 +60,7 @@ export default function LoginPage() {
               type={show ? "text" : "password"}
               value={password}
               onChange={(event) => setPassword(event.target.value)}
-              placeholder="At least 6 characters"
+              placeholder="At least 8 characters"
               autoComplete="current-password"
             />
             <button

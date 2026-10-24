@@ -4,35 +4,60 @@ import type { Whiteboard } from "../types/board.ts"
 
 interface BoardState {
   boards: Whiteboard[]
-  load(ownerId: string): void
-  create(ownerId: string): Whiteboard
-  rename(id: string, title: string): void
-  duplicate(id: string, ownerId: string): void
-  remove(id: string): void
+  loading: boolean
+  error: string | null
+  load(): Promise<void>
+  create(title: string): Promise<Whiteboard>
+  rename(id: string, title: string): Promise<void>
+  duplicate(id: string): Promise<Whiteboard>
+  remove(id: string): Promise<void>
+  join(boardId: string): Promise<Whiteboard>
 }
+
+const messageFor = (error: unknown): string =>
+  error instanceof Error ? error.message : "Something went wrong."
 
 export const useBoardStore = create<BoardState>((set) => ({
   boards: [],
-  load: (ownerId) => set({ boards: boardService.list(ownerId) }),
-  create(ownerId) {
-    const board = boardService.create(ownerId)
+  loading: false,
+  error: null,
+  async load() {
+    set({ loading: true, error: null })
+    try {
+      set({ boards: await boardService.list(), loading: false })
+    } catch (error) {
+      set({ loading: false, error: messageFor(error) })
+    }
+  },
+  async create(title) {
+    const board = await boardService.create(title)
     set((state) => ({ boards: [board, ...state.boards] }))
     return board
   },
-  rename(id, title) {
-    const board = boardService.update(id, { title })
+  async rename(id, title) {
+    const board = await boardService.rename(id, title)
     set((state) => ({
       boards: state.boards.map((item) => (item.id === id ? board : item)),
     }))
   },
-  duplicate(id, ownerId) {
-    const board = boardService.duplicate(id, ownerId)
+  async duplicate(id) {
+    const board = await boardService.duplicate(id)
     set((state) => ({ boards: [board, ...state.boards] }))
+    return board
   },
-  remove(id) {
-    boardService.remove(id)
+  async remove(id) {
+    await boardService.remove(id)
     set((state) => ({
       boards: state.boards.filter((board) => board.id !== id),
     }))
+  },
+  async join(boardId) {
+    const board = await boardService.join(boardId)
+    set((state) => ({
+      boards: state.boards.some((item) => item.id === board.id)
+        ? state.boards.map((item) => (item.id === board.id ? board : item))
+        : [board, ...state.boards],
+    }))
+    return board
   },
 }))
