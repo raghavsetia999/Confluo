@@ -21,5 +21,13 @@ export const browserPersistence: PersistenceService = {
   },
 }
 
-export const uid = (prefix = "id") =>
-  `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+const randomToken = (): string => {
+  const cryptoApi = globalThis.crypto
+  if (cryptoApi && typeof cryptoApi.randomUUID === "function") {
+    return cryptoApi.randomUUID()
+  }
+  // Non-secure contexts (plain HTTP on a LAN address) have no randomUUID.
+  return `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`
+}
+
+export const uid = (prefix = "id") => `${prefix}_${randomToken()}`

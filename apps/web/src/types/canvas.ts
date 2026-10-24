@@ -19,9 +19,24 @@ export interface CanvasElement {
   createdBy: string
 }
 
+/** A committed local canvas change. `before` is the pre-gesture snapshot. */
+export type CanvasChangeListener = (
+  elements: CanvasElement[],
+  before: CanvasElement[],
+) => void
+
 export type EditorTool = "select" | "pan" | "rectangle" | "ellipse" | "diamond" | "text" | "sticky-note" | "freehand" | "connector" | "eraser"
 
-export type SyncStatus = "saved" | "syncing" | "offline" | "reconnecting" | "error"
+export type SyncStatus =
+  | "saved"
+  | "syncing"
+  | "offline"
+  | "reconnecting"
+  | "connecting"
+  | "connected"
+  | "synced"
+  | "disconnected"
+  | "error"
 
 export interface SyncState {
   status: SyncStatus
