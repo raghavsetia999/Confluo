@@ -2672,9 +2672,12 @@ body {
     flex: 0 0 36px;
   }
   .board-status,
-  .zoom-controls,
   .minimap {
     display: none;
+  }
+  .zoom-controls {
+    right: 8px;
+    bottom: 67px;
   }
   .properties-toolbar {
     top: auto;

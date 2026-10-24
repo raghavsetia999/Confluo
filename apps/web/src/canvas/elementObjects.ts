@@ -75,13 +75,24 @@ const paint = (element: CanvasElement) => ({
   strokeUniform: true,
 })
 
-const place = (element: CanvasElement) => ({
-  left: element.x + element.width / 2,
-  top: element.y + element.height / 2,
-  angle: element.rotation,
-  originX: "center" as const,
-  originY: "center" as const,
-})
+const place = (element: CanvasElement) => {
+  if (element.type === "connector") {
+    return {
+      left: element.x,
+      top: element.y,
+      angle: element.rotation,
+      originX: "left" as const,
+      originY: "top" as const,
+    }
+  }
+  return {
+    left: element.x + element.width / 2,
+    top: element.y + element.height / 2,
+    angle: element.rotation,
+    originX: "center" as const,
+    originY: "center" as const,
+  }
+}
 
 function remember(
   object: FabricObject,
@@ -98,11 +109,21 @@ function remember(
   })
   // Polygons and polylines derive left/top from their points, so placement is
   // reasserted after construction to keep the element model authoritative.
-  object.set({
-    left: element.x + element.width / 2,
-    top: element.y + element.height / 2,
-    angle: element.rotation,
-  })
+  if (element.type === "connector") {
+    object.set({
+      left: element.x,
+      top: element.y,
+      angle: element.rotation,
+      originX: "left",
+      originY: "top",
+    })
+  } else {
+    object.set({
+      left: element.x + element.width / 2,
+      top: element.y + element.height / 2,
+      angle: element.rotation,
+    })
+  }
   object.setCoords()
   return object
 }
@@ -259,8 +280,10 @@ export function createElementObject(element: CanvasElement): FabricObject {
           ...shared,
           ...paint(element),
           fill: "transparent",
-          strokeLineJoin: "miter",
+          strokeLineJoin: "round",
           strokeLineCap: "round",
+          originX: "left",
+          originY: "top",
         }),
         element,
         element.width,
@@ -355,13 +378,14 @@ export function applyElementToObject(
     meta.width = element.width
     meta.height = element.height
   } else if (element.type === "connector") {
-    // Connector geometry is derived from the element box, so points are
-    // regenerated instead of scaled (a scaled arrow head distorts).
+    // Connector geometry is derived from the element box
     const line = object as Polyline
     line.set({
       points: connectorPoints(element.width, element.height),
       scaleX: 1,
       scaleY: 1,
+      originX: "left",
+      originY: "top",
     })
     line.setDimensions()
     meta.width = element.width
@@ -370,11 +394,21 @@ export function applyElementToObject(
 
   // `setDimensions` and group layout can move an object, so the placement is
   // reasserted last to keep the element model authoritative.
-  object.set({
-    left: element.x + element.width / 2,
-    top: element.y + element.height / 2,
-    angle: element.rotation,
-  })
+  if (element.type === "connector") {
+    object.set({
+      left: element.x,
+      top: element.y,
+      angle: element.rotation,
+      originX: "left",
+      originY: "top",
+    })
+  } else {
+    object.set({
+      left: element.x + element.width / 2,
+      top: element.y + element.height / 2,
+      angle: element.rotation,
+    })
+  }
   object.setCoords()
 }
 
@@ -383,7 +417,6 @@ export function readElement(object: FabricObject): CanvasElement | null {
   const meta = registry.get(object)
   if (!meta) return null
 
-  const center = object.getCenterPoint()
   // `getTotalObjectScaling()` also folds in the canvas viewport zoom and retina
   // scaling, which would make the logical element geometry depend on the
   // viewport. `getObjectScaling()` keeps only object/group scaling.
@@ -392,6 +425,29 @@ export function readElement(object: FabricObject): CanvasElement | null {
     meta.type === "text" ? (object as Textbox).height : meta.height
   const width = Math.max(1, Math.abs(meta.width * scaling.x))
   const height = Math.max(1, Math.abs(naturalHeight * scaling.y))
+
+  if (meta.type === "connector") {
+    const left = (object.left ?? 0)
+    const top = (object.top ?? 0)
+    const element: CanvasElement = {
+      id: meta.id,
+      type: meta.type,
+      x: left,
+      y: top,
+      width,
+      height,
+      rotation: object.getTotalAngle(),
+      style: { fill: "transparent", stroke: "transparent", strokeWidth: 0, opacity: 1 },
+      createdBy: meta.createdBy,
+    }
+    element.style.opacity = object.opacity ?? 1
+    element.style.fill = "transparent"
+    element.style.stroke = strokeRead(object.stroke as string | undefined)
+    element.style.strokeWidth = object.strokeWidth ?? 0
+    return element
+  }
+
+  const center = object.getCenterPoint()
 
   const element: CanvasElement = {
     id: meta.id,

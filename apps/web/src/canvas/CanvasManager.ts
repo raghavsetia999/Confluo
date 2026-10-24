@@ -443,6 +443,13 @@ export class CanvasManager {
     for (const object of this.objects.values()) {
       object.selectable = selectable
       object.evented = selectable || this.tool === "eraser"
+      const meta = metaOf(object)
+      if (meta?.type === "connector") {
+        // Make connectors easier to transform from the head
+        object.set({
+          cornerSize: 10,
+        })
+      }
     }
     this.canvas.requestRenderAll()
   }
@@ -577,6 +584,45 @@ export class CanvasManager {
   private onModified = () => {
     const id = this.transforming
     this.transforming = null
+    // For connectors, normalize transform so tail stays fixed at origin
+    if (id) {
+      const obj = this.objects.get(id)
+      if (obj && metaOf(obj)?.type === "connector") {
+        const ang = obj.angle || 0
+        const rad = (ang * Math.PI) / 180
+        const scaleX = obj.scaleX || 1
+        const scaleY = obj.scaleY || 1
+        const w = (obj.width || 0) * Math.abs(scaleX)
+        const h = (obj.height || 0) * Math.abs(scaleY)
+        const left = obj.left || 0
+        const top = obj.top || 0
+        const el = readElement(obj)
+        if (el) {
+          // Keep tail fixed at left/top (origin)
+          const newEl = {
+            ...el,
+            x: left,
+            y: top,
+            width: Math.max(2, w * Math.cos(rad) - h * Math.sin(rad)),
+            height: Math.max(2, w * Math.sin(rad) + h * Math.cos(rad)),
+            rotation: ang,
+          }
+          // Simpler: compute vector length in world space
+          const vx = w
+          const vy = h
+          const len = Math.hypot(vx, vy) || Math.max(Math.abs(vx), Math.abs(vy)) || 2
+          if (ang === 0) {
+            newEl.width = Math.max(2, vx)
+            newEl.height = Math.max(2, vy)
+          } else {
+            // When rotated, extract the vector components
+            newEl.width = Math.max(2, vx)
+            newEl.height = Math.max(2, vy)
+          }
+          applyElementToObject(obj, newEl)
+        }
+      }
+    }
     this.flush(this.consumeRemoteDeferred(id))
   }
 
@@ -584,6 +630,16 @@ export class CanvasManager {
     transform?: { target?: FabricObject }
   }) => {
     this.transforming = elementIdOf(event.transform?.target) ?? null
+    const target = event.transform?.target
+    if (target) {
+      const meta = metaOf(target)
+      if (meta?.type === "connector") {
+        target.set({
+          originX: "left",
+          originY: "top",
+        })
+      }
+    }
   }
 
   private onEditingEntered = (event: { target?: FabricObject }) => {
@@ -739,6 +795,35 @@ export class CanvasManager {
     end: Point,
     previous?: CanvasElement,
   ): CanvasElement {
+    if (tool === "connector") {
+      const x = start.x
+      const y = start.y
+      const width = Math.max(2, end.x - start.x)
+      const height = Math.max(2, end.y - start.y)
+      const base =
+        previous ??
+        ({
+          id: uid("element"),
+          type: tool,
+          x,
+          y,
+          width,
+          height,
+          rotation: 0,
+          style: this.defaultStyle(tool),
+          createdBy: "local",
+        } satisfies CanvasElement)
+
+      return {
+        ...base,
+        x,
+        y,
+        width,
+        height,
+        text: undefined,
+        points: undefined,
+      }
+    }
     const x = Math.min(start.x, end.x)
     const y = Math.min(start.y, end.y)
     const width = Math.max(2, Math.abs(end.x - start.x))

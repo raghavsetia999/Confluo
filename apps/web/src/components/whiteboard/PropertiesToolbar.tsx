@@ -23,25 +23,27 @@ export default function PropertiesToolbar({
   if (!selected) return null
   return (
     <div className="properties-toolbar">
-      <label title="Fill color">
-        <span>Fill</span>
-        <input
-          type="color"
-          value={
-            selected.style.fill === "transparent"
-              ? "#ffffff"
-              : selected.style.fill
-          }
-          onChange={(event) =>
-            onUpdate({ style: { fill: event.target.value } })
-          }
-        />
-      </label>
+      {(selected.type !== "connector" && selected.type !== "freehand") && (
+        <label title="Fill color">
+          <span>Fill</span>
+          <input
+            type="color"
+            value={
+              selected.style.fill === "transparent"
+                ? "#ffffff"
+                : selected.style.fill
+            }
+            onChange={(event) =>
+              onUpdate({ style: { fill: event.target.value } })
+            }
+          />
+        </label>
+      )}
       <label title="Stroke color">
         <span>Stroke</span>
         <input
           type="color"
-          value={selected.style.stroke}
+          value={selected.style.stroke === "transparent" ? "#20201f" : selected.style.stroke}
           onChange={(event) =>
             onUpdate({ style: { stroke: event.target.value } })
           }
@@ -57,7 +59,9 @@ export default function PropertiesToolbar({
         >
           <option value="1">1</option>
           <option value="2">2</option>
+          <option value="3">3</option>
           <option value="4">4</option>
+          <option value="6">6</option>
           <option value="8">8</option>
         </select>
       </label>
